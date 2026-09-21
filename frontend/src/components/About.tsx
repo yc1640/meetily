@@ -8,10 +8,12 @@ import { updateService, UpdateInfo } from '@/services/updateService';
 import { Button } from './ui/button';
 import { Loader2, CheckCircle2 } from 'lucide-react';
 import { toast } from 'sonner';
+import { useAppLanguage } from '@/contexts/AppLanguageContext';
 
 
 export function About() {
-    const [currentVersion, setCurrentVersion] = useState<string>('0.4.0');
+    const { t } = useAppLanguage();
+    const [currentVersion, setCurrentVersion] = useState<string>('0.4.1');
     const [updateInfo, setUpdateInfo] = useState<UpdateInfo | null>(null);
     const [isChecking, setIsChecking] = useState(false);
     const [showUpdateDialog, setShowUpdateDialog] = useState(false);
@@ -37,11 +39,11 @@ export function About() {
             if (info.available) {
                 setShowUpdateDialog(true);
             } else {
-                toast.success('You are running the latest version');
+                toast.success(t('latestVersionInstalled'));
             }
         } catch (error: any) {
             console.error('Failed to check for updates:', error);
-            toast.error('Failed to check for updates: ' + (error.message || 'Unknown error'));
+            toast.error(`${t('failedCheckUpdates')}: ${error.message || t('unknownError')}`);
         } finally {
             setIsChecking(false);
         }
@@ -76,20 +78,23 @@ export function About() {
                         {isChecking ? (
                             <>
                                 <Loader2 className="h-3 w-3 mr-2 animate-spin" />
-                                Checking...
+                                {t('checkingForUpdates')}
                             </>
                         ) : (
                             <>
                                 <CheckCircle2 className="h-3 w-3 mr-2" />
-                                Check for Updates
+                                {t('checkForUpdates')}
                             </>
                         )}
                     </Button>
                     {updateInfo?.available && (
                         <div className="mt-2 text-xs text-blue-600">
-                            Update available: v{updateInfo.version}
+                            {t('updateVersionAvailable').replace('{version}', `v${updateInfo.version || ''}`)}
                         </div>
                     )}
+                    <p className="mt-2 text-xs text-gray-400">
+                        {t('updatesProvidedByFork')}
+                    </p>
                 </div>
             </div>
 

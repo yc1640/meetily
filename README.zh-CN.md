@@ -87,7 +87,7 @@ Meetily 可以录制麦克风与系统音频，将会议内容转成逐字稿，
 
 ## 安装
 
-本分支目前没有在仓库中提交 App 或 DMG 等构建产物。已有本地打包文件也不会进入 Git，因为它们属于可重新生成的产物。
+本分支不会在 Git 历史中提交 App 或 DMG 等构建产物，因为它们属于可重新生成的文件。正式安装包会通过当前仓库的 [GitHub Releases](https://github.com/yc1640/meetily/releases) 发布。
 
 如果后续发布 GitHub Release，可直接下载对应平台的安装包。当前可按下面的方式从源码构建。
 
@@ -129,10 +129,10 @@ sudo xcodebuild -runFirstLaunch
 
 ```text
 target/release/bundle/macos/meetily.app
-target/release/bundle/dmg/meetily_0.4.0_aarch64.dmg
+target/release/bundle/dmg/meetily_0.4.1_aarch64.dmg
 ```
 
-当前定制版关闭了 Tauri 更新器制品的强制生成，因此本地构建 App/DMG 不需要更新签名私钥。正式发布自动更新版本时，仍需单独配置签名和发布流程。
+日常本地构建关闭了 Tauri 更新制品生成，因此 App/DMG 打包不需要更新私钥。正式 Release 构建会启用更新制品并发布到 `yc1640/meetily`；详细流程见 [发布与自动更新](docs/RELEASING_ZH.md)。
 
 ## 当前限制
 
@@ -147,6 +147,7 @@ target/release/bundle/dmg/meetily_0.4.0_aarch64.dmg
 ## 文档
 
 - [定制版完整变更说明](docs/CUSTOM_CHANGES_ZH.md)
+- [发布与自动更新](docs/RELEASING_ZH.md)
 - [从源码构建](docs/BUILDING.md)
 - [系统架构](docs/architecture.md)
 - [上游英文介绍](README.md)

@@ -14,13 +14,13 @@
     <a href="https://trendshift.io/repositories/21958" target="_blank"><img src="https://trendshift.io/api/badge/repositories/21958" alt="Zackriya-Solutions%2Fmeetily | Trendshift" style="width: 250px; height: 55px;" width="250" height="55"/></a>
     <br>
     <br>
-    <a href="https://github.com/Zackriya-Solutions/meeting-minutes/releases/"><img src="https://img.shields.io/badge/Pre_Release-Link-brightgreen" alt="Pre-Release"></a>
-    <a href="https://github.com/Zackriya-Solutions/meeting-minutes/releases"><img alt="GitHub Repo stars" src="https://img.shields.io/github/stars/zackriya-solutions/meeting-minutes?style=flat">
+    <a href="https://github.com/yc1640/meetily/releases/"><img src="https://img.shields.io/badge/Release-Link-brightgreen" alt="Releases"></a>
+    <a href="https://github.com/yc1640/meetily"><img alt="GitHub Repo stars" src="https://img.shields.io/github/stars/yc1640/meetily?style=flat">
 </a>
- <a href="https://github.com/Zackriya-Solutions/meeting-minutes/releases"> <img alt="GitHub Downloads (all assets, all releases)" src="https://img.shields.io/github/downloads/zackriya-solutions/meeting-minutes/total?style=plastic"> </a>
-    <a href="https://github.com/Zackriya-Solutions/meeting-minutes/releases"><img src="https://img.shields.io/badge/License-MIT-blue" alt="License"></a>
-    <a href="https://github.com/Zackriya-Solutions/meeting-minutes/releases"><img src="https://img.shields.io/badge/Supported_OS-macOS,_Windows-white" alt="Supported OS"></a>
-    <a href="https://github.com/Zackriya-Solutions/meeting-minutes/releases"><img alt="GitHub Tag" src="https://img.shields.io/github/v/tag/zackriya-solutions/meeting-minutes?include_prereleases&color=yellow">
+ <a href="https://github.com/yc1640/meetily/releases"> <img alt="GitHub Downloads (all assets, all releases)" src="https://img.shields.io/github/downloads/yc1640/meetily/total?style=plastic"> </a>
+    <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-blue" alt="License"></a>
+    <a href="https://github.com/yc1640/meetily/releases"><img src="https://img.shields.io/badge/Current_Fork_Release-macOS_Apple_Silicon-white" alt="Current fork release platform"></a>
+    <a href="https://github.com/yc1640/meetily/releases"><img alt="GitHub Tag" src="https://img.shields.io/github/v/tag/yc1640/meetily?include_prereleases&color=yellow">
 </a>
     <br>
     <h3>
@@ -129,12 +129,11 @@ Whether you're a defense consultant, enterprise executive, legal professional, o
 
 ### 🪟 **Windows**
 
-1. Download the latest `x64-setup.exe` from [Releases](https://github.com/Zackriya-Solutions/meeting-minutes/releases/latest)
-2. Run the installer
+The customized fork does not currently publish a Windows installer. Build from source if you want to test the Windows-compatible features; managed MLX-Audio and local SenseVoice remain macOS-only.
 
 ### 🍎 **macOS**
 
-1. Download `meetily_0.4.0_aarch64.dmg` from [Releases](https://github.com/Zackriya-Solutions/meeting-minutes/releases/latest)
+1. Download `meetily_0.4.1_aarch64.dmg` from this fork's [Releases](https://github.com/yc1640/meetily/releases/latest)
 2. Open the downloaded `.dmg` file
 3. Drag **Meetily** to your Applications folder
 4. Open **Meetily** from Applications folder
@@ -149,8 +148,8 @@ Build from source following our detailed guides:
 **Quick start:**
 
 ```bash
-git clone https://github.com/Zackriya-Solutions/meeting-minutes
-cd meeting-minutes/frontend
+git clone https://github.com/yc1640/meetily.git
+cd meetily/frontend
 pnpm install
 ./build-gpu.sh
 ```

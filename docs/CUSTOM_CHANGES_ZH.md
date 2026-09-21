@@ -658,11 +658,19 @@ cd: frontend: No such file or directory
 "createUpdaterArtifacts": false
 ```
 
-这避免本地构建因为存在更新器公钥但没有 `TAURI_SIGNING_PRIVATE_KEY` 而强制失败。它不等于完成正式发行签名，也不会生成可供自动更新器使用的签名制品。
+这避免日常本地构建因为存在更新器公钥但没有 `TAURI_SIGNING_PRIVATE_KEY` 而强制失败。正式 Release 使用 `tauri.release.conf.json` 覆盖为 `true`，生成更新压缩包、签名和 `latest.json`。
+
+自动更新地址已经从上游仓库切换为：
+
+```text
+https://github.com/yc1640/meetily/releases/latest/download/latest.json
+```
+
+更新签名使用本 fork 独立生成的公钥；私钥只保存在本机安全目录和 GitHub Actions Secret 中，不进入仓库。当前定制版版本为 `0.4.1`。旧的 `0.4.0` 安装包仍内嵌上游更新地址，因此需要手动安装一次本 fork 的 `0.4.1`，之后才能跟随本 fork 自动更新。完整发布步骤见 `docs/RELEASING_ZH.md`。
 
 ### 16.3 当前打包状态
 
-本轮没有自动打包。macOS 首次构建若遇到 `cidre` 调用 `xcodebuild` 失败，可能需要先在用户终端执行：
+macOS 首次构建若遇到 `cidre` 调用 `xcodebuild` 失败，可能需要先在用户终端执行：
 
 ```bash
 sudo xcodebuild -runFirstLaunch
@@ -837,6 +845,7 @@ could not find native static library `at`
 - `frontend/src/contexts/ConfigContext.tsx`：默认转写语言改为 `auto` 并适配新模型配置。
 - `frontend/src/contexts/OnboardingContext.tsx`：保存各模型是否立即下载的选择和真实下载状态。
 - `frontend/src/contexts/RecordingStateContext.tsx`：录音全局状态增加 `transcription_enabled`。
+- `frontend/src/components/UpdateCheckProvider.tsx`：启动和托盘更新检查使用当前界面语言显示本 fork 的更新通知。
 
 ### 21.6 通用设置与状态组件
 
@@ -871,6 +880,9 @@ could not find native static library `at`
 - `frontend/src/components/TranscriptSettings.tsx`：统一 provider/model、外部 endpoint、语言能力和本地模型管理入口。
 - `frontend/src/components/VirtualizedTranscriptView.tsx`：汉化逐字稿列表和状态提示，并允许会议详情精确显示原文或整理稿，不再额外隐藏词语。
 - `frontend/src/components/WhisperModelManager.tsx`：增加已有 `.bin` 模型、外部标记和完整性状态。
+- `frontend/src/components/About.tsx`：更新检查接入中英文文案并明确更新由 `yc1640/meetily` 提供。
+- `frontend/src/components/UpdateDialog.tsx`：汉化更新详情、下载进度、安装和错误状态。
+- `frontend/src/components/UpdateNotification.tsx`：更新通知支持由语言上下文提供文案。
 
 ### 21.7 导入音频与会议详情
 
@@ -902,6 +914,7 @@ could not find native static library `at`
 - `frontend/src/hooks/meeting-details/useTemplates.ts`：按界面语言本地化三个内置模板的名称、说明和选中提示，固定通用模板顺序，并保留自定义模板原文。
 - `frontend/src/hooks/useTranscriptionModels.ts`：统一汇总本地与外部 provider 的模型和下载状态。
 - `frontend/src/hooks/usePaginatedTranscripts.ts`：保留每段原文、整理稿和默认有效文本，供会议详情切换显示版本。
+- `frontend/src/hooks/useUpdateCheck.ts`：启动后检查本 fork 更新，并保证语言切换后使用最新回调。
 - `frontend/src/lib/parakeet.ts`：扩展 Parakeet 模型信息和外部模型接口。
 - `frontend/src/lib/whisper.ts`：扩展 Whisper 模型外部标记和导入接口。
 - `frontend/src/services/configService.ts`：前端配置服务读写新增转写连接字段和默认值。

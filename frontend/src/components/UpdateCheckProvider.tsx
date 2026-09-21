@@ -5,6 +5,7 @@ import { useUpdateCheck } from '@/hooks/useUpdateCheck';
 import { UpdateInfo } from '@/services/updateService';
 import { UpdateDialog } from './UpdateDialog';
 import { setUpdateDialogCallback, showUpdateNotification } from './UpdateNotification';
+import { useAppLanguage } from '@/contexts/AppLanguageContext';
 
 interface UpdateCheckContextType {
   updateInfo: UpdateInfo | null;
@@ -16,19 +17,25 @@ interface UpdateCheckContextType {
 const UpdateCheckContext = createContext<UpdateCheckContextType | undefined>(undefined);
 
 export function UpdateCheckProvider({ children }: { children: React.ReactNode }) {
+  const { t } = useAppLanguage();
   const [showDialog, setShowDialog] = useState(false);
 
   const handleShowDialog = useCallback(() => {
     setShowDialog(true);
   }, []);
 
+  const handleUpdateAvailable = useCallback((info: UpdateInfo) => {
+    showUpdateNotification(info, handleShowDialog, {
+      title: t('updateAvailable'),
+      description: t('updateVersionAvailable').replace('{version}', info.version || ''),
+      action: t('viewUpdateDetails'),
+    });
+  }, [handleShowDialog, t]);
+
   const { updateInfo, isChecking, checkForUpdates } = useUpdateCheck({
     checkOnMount: true,
     showNotification: true,
-    onUpdateAvailable: (info) => {
-      // Show notification, dialog will be shown when user clicks notification
-      showUpdateNotification(info, handleShowDialog);
-    },
+    onUpdateAvailable: handleUpdateAvailable,
   });
 
   useEffect(() => {

@@ -5,11 +5,21 @@ import { UpdateInfo } from '@/services/updateService';
 
 let globalShowDialogCallback: (() => void) | null = null;
 
+interface UpdateNotificationLabels {
+  title: string;
+  description: string;
+  action: string;
+}
+
 export function setUpdateDialogCallback(callback: () => void) {
   globalShowDialogCallback = callback;
 }
 
-export function showUpdateNotification(updateInfo: UpdateInfo, onUpdateClick?: () => void) {
+export function showUpdateNotification(
+  updateInfo: UpdateInfo,
+  onUpdateClick?: () => void,
+  labels?: UpdateNotificationLabels,
+) {
   const handleClick = () => {
     if (onUpdateClick) {
       onUpdateClick();
@@ -23,9 +33,9 @@ export function showUpdateNotification(updateInfo: UpdateInfo, onUpdateClick?: (
       <div className="flex items-center gap-2">
         <Download className="h-4 w-4" />
         <div>
-          <p className="font-medium">Update Available</p>
+          <p className="font-medium">{labels?.title || 'Update available'}</p>
           <p className="text-sm text-muted-foreground">
-            Version {updateInfo.version} is now available
+            {labels?.description || `Version ${updateInfo.version} is now available`}
           </p>
         </div>
       </div>
@@ -36,7 +46,7 @@ export function showUpdateNotification(updateInfo: UpdateInfo, onUpdateClick?: (
         }}
         className="text-sm font-medium text-blue-600 hover:text-blue-700 underline"
       >
-        View Details
+        {labels?.action || 'View details'}
       </button>
     </div>,
     {

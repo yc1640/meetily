@@ -1,7 +1,7 @@
 {
     "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
     "productName": "meetily",
-    "version": "0.4.0",
+    "version": "0.4.1",
     "identifier": "com.meetily.ai",
     "build": {
         "frontendDist": "../out",
@@ -112,9 +112,9 @@
     },
     "plugins": {
         "updater": {
-            "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEVDQTYzMUQ3ODc5N0M4MkEKUldRcXlKZUgxekdtN09DRkVWSHNpZlJseEVOUmpNd1dDSTNaLzZ3MXJGTnY3WW1pdnlOYjBpbkIK",
+            "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDRBMjUxOTU3OTc1NTQ0QjUKUldTMVJGV1hWeGtsU2hJeWllcm11UDljZXo4VVZMTFduRVpLZEM1bzl3TkxSeTBqZm1yclRjNzgK",
             "endpoints": [
-                "https://github.com/Zackriya-Solutions/meeting-minutes/releases/latest/download/latest.json"
+                "https://github.com/yc1640/meetily/releases/latest/download/latest.json"
             ]
         }
     }

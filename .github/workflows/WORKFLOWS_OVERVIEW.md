@@ -129,16 +129,17 @@ This document provides a quick overview of all available CI/CD workflows in this
 ---
 
 ### 7. **release.yml** - Production Release
-**Purpose:** Create official releases with signed binaries
+**Purpose:** Create official releases for the `yc1640/meetily` update channel
 
 **Key Features:**
-- Signing REQUIRED
+- Tauri updater signing REQUIRED through `TAURI_SIGNING_PRIVATE_KEY`
 - Creates GitHub Release (draft)
 - Version tags from `tauri.conf.json`
 - Uploads release assets
-- **macOS and Windows only** (Linux excluded from production releases)
+- **Apple Silicon macOS only** until the fork's Windows signing and runtime paths are validated
 - Auto-generates `latest.json` for Tauri updater
-- **Auto-increment versioning**: If tag exists, auto-increments (e.g., `0.1.1` -> `0.1.1.1` -> `0.1.1.2`, up to `.100`)
+- Requires a standard SemVer version that does not already have a tag
+- Must be run from `main`
 
 **Triggers:**
 - Manual dispatch only
@@ -150,17 +151,15 @@ This document provides a quick overview of all available CI/CD workflows in this
 **Outputs:**
 - GitHub Release (draft)
 - macOS: DMG installer, app.tar.gz (updater), .sig
-- Windows: MSI installer (signed), NSIS installer (signed), .sig files
 - Updater manifest: latest.json
 - Release notes auto-generated
 
 **Version Behavior:**
-- If `v0.1.1` tag doesn't exist: creates `v0.1.1`
-- If `v0.1.1` exists: creates `v0.1.1.1`
-- If `v0.1.1.1` exists: creates `v0.1.1.2`
-- Maximum: `v0.1.1.100` (then update `tauri.conf.json`)
+- If the configured tag does not exist, the workflow creates it with the draft release.
+- If the tag already exists, the workflow stops and requires an explicit version bump.
+- Keep `tauri.conf.json`, `Cargo.toml`, `package.json`, and the Meetily entry in `Cargo.lock` in sync.
 
-**Note:** Linux builds are not included in releases. Use `build-linux.yml` for Linux testing.
+**Note:** Windows and Linux builds are not included in fork releases. Their standalone workflows remain available for testing.
 
 ---
 
