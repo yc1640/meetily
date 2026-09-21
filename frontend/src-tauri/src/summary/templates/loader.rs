@@ -1,9 +1,9 @@
 use super::defaults;
 use super::types::Template;
-use std::path::PathBuf;
-use tracing::{debug, info, warn};
 use once_cell::sync::Lazy;
 use std::sync::RwLock;
+use std::{fs, path::PathBuf};
+use tracing::{debug, info, warn};
 
 // Global storage for the bundled templates directory path
 static BUNDLED_TEMPLATES_DIR: Lazy<RwLock<Option<PathBuf>>> = Lazy::new(|| RwLock::new(None));
@@ -29,6 +29,27 @@ fn get_custom_templates_dir() -> Option<PathBuf> {
     Some(path)
 }
 
+fn validate_template_id(template_id: &str) -> Result<(), String> {
+    let is_valid = !template_id.is_empty()
+        && template_id.len() <= 80
+        && template_id
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'-');
+
+    if is_valid {
+        Ok(())
+    } else {
+        Err("Template ID must contain only letters, numbers, hyphens, or underscores".to_string())
+    }
+}
+
+fn custom_template_path(template_id: &str) -> Result<PathBuf, String> {
+    validate_template_id(template_id)?;
+    let directory = get_custom_templates_dir()
+        .ok_or_else(|| "Could not resolve the custom template directory".to_string())?;
+    Ok(directory.join(format!("{template_id}.json")))
+}
+
 /// Load a template from the bundled resources directory
 ///
 /// # Arguments
@@ -44,7 +65,10 @@ fn load_bundled_template(template_id: &str) -> Option<String> {
 
     match std::fs::read_to_string(&template_path) {
         Ok(content) => {
-            info!("Loaded bundled template '{}' from {:?}", template_id, template_path);
+            info!(
+                "Loaded bundled template '{}' from {:?}",
+                template_id, template_path
+            );
             Some(content)
         }
         Err(e) => {
@@ -69,7 +93,10 @@ fn load_custom_template(template_id: &str) -> Option<String> {
 
     match std::fs::read_to_string(&template_path) {
         Ok(content) => {
-            info!("Loaded custom template '{}' from {:?}", template_id, template_path);
+            info!(
+                "Loaded custom template '{}' from {:?}",
+                template_id, template_path
+            );
             Some(content)
         }
         Err(e) => {
@@ -77,6 +104,75 @@ fn load_custom_template(template_id: &str) -> Option<String> {
             None
         }
     }
+}
+
+/// Loads the shipped version of a template without applying a user override.
+pub fn get_default_template(template_id: &str) -> Result<Template, String> {
+    validate_template_id(template_id)?;
+
+    let json_content = if let Some(bundled_content) = load_bundled_template(template_id) {
+        bundled_content
+    } else if let Some(builtin_content) = defaults::get_builtin_template(template_id) {
+        builtin_content.to_string()
+    } else {
+        return Err(format!("Default template '{template_id}' not found"));
+    };
+
+    validate_and_parse_template(&json_content)
+}
+
+/// Returns whether an ID belongs to a template shipped with Meetily.
+pub fn is_default_template(template_id: &str) -> bool {
+    validate_template_id(template_id).is_ok()
+        && (load_bundled_template(template_id).is_some()
+            || defaults::get_builtin_template(template_id).is_some())
+}
+
+/// Returns whether the user has saved a custom template or built-in override.
+pub fn is_custom_template(template_id: &str) -> bool {
+    custom_template_path(template_id).is_ok_and(|path| path.is_file())
+}
+
+/// Saves a validated template in the user template directory.
+pub fn save_custom_template(template_id: &str, template: &Template) -> Result<(), String> {
+    validate_template_id(template_id)?;
+    template.validate()?;
+
+    let destination = custom_template_path(template_id)?;
+    let directory = destination
+        .parent()
+        .ok_or_else(|| "Custom template path has no parent directory".to_string())?;
+    fs::create_dir_all(directory)
+        .map_err(|error| format!("Failed to create custom template directory: {error}"))?;
+
+    let json = serde_json::to_string_pretty(template)
+        .map_err(|error| format!("Failed to serialize template: {error}"))?;
+    let temporary = directory.join(format!(".{template_id}.tmp"));
+    fs::write(&temporary, format!("{json}\n"))
+        .map_err(|error| format!("Failed to write template: {error}"))?;
+
+    #[cfg(target_os = "windows")]
+    if destination.exists() {
+        fs::remove_file(&destination)
+            .map_err(|error| format!("Failed to replace existing template: {error}"))?;
+    }
+
+    if let Err(error) = fs::rename(&temporary, &destination) {
+        let _ = fs::remove_file(&temporary);
+        return Err(format!("Failed to save template: {error}"));
+    }
+
+    Ok(())
+}
+
+/// Deletes a custom template or override without touching bundled resources.
+pub fn delete_custom_template(template_id: &str) -> Result<(), String> {
+    let path = custom_template_path(template_id)?;
+    if !path.is_file() {
+        return Err(format!("Custom template '{template_id}' does not exist"));
+    }
+
+    fs::remove_file(path).map_err(|error| format!("Failed to delete custom template: {error}"))
 }
 
 /// Load and parse a template by identifier
@@ -88,12 +184,13 @@ fn load_custom_template(template_id: &str) -> Option<String> {
 /// 4. Return error if not found in any location
 ///
 /// # Arguments
-/// * `template_id` - Template identifier (e.g., "daily_standup", "standard_meeting")
+/// * `template_id` - Template identifier (e.g., "standard_meeting", "content_summary")
 ///
 /// # Returns
 /// Parsed and validated Template struct
 pub fn get_template(template_id: &str) -> Result<Template, String> {
     info!("Loading template: {}", template_id);
+    validate_template_id(template_id)?;
 
     // Try custom template first, then bundled, then built-in
     let json_content = if let Some(custom_content) = load_custom_template(template_id) {
@@ -193,7 +290,15 @@ pub fn list_template_ids() -> Vec<String> {
         }
     }
 
-    ids.sort();
+    ids.sort_by(|left, right| {
+        let rank = |id: &str| match id {
+            "standard_meeting" => 0,
+            "project_sync" => 1,
+            "content_summary" => 2,
+            _ => 3,
+        };
+        rank(left).cmp(&rank(right)).then_with(|| left.cmp(right))
+    });
     ids
 }
 
@@ -223,11 +328,11 @@ mod tests {
 
     #[test]
     fn test_get_builtin_template() {
-        let template = get_template("daily_standup");
+        let template = get_template("standard_meeting");
         assert!(template.is_ok());
 
         let template = template.unwrap();
-        assert_eq!(template.name, "Daily Standup");
+        assert_eq!(template.name, "General Meeting Notes");
         assert!(!template.sections.is_empty());
     }
 
@@ -240,13 +345,23 @@ mod tests {
     #[test]
     fn test_list_template_ids() {
         let ids = list_template_ids();
-        assert!(ids.contains(&"daily_standup".to_string()));
         assert!(ids.contains(&"standard_meeting".to_string()));
+        assert!(ids.contains(&"project_sync".to_string()));
+        assert!(ids.contains(&"content_summary".to_string()));
+        assert!(!ids.contains(&"daily_standup".to_string()));
     }
 
     #[test]
     fn test_validate_invalid_json() {
         let result = validate_and_parse_template("invalid json");
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn template_id_rejects_path_traversal() {
+        assert!(validate_template_id("custom-template_1").is_ok());
+        assert!(validate_template_id("../template").is_err());
+        assert!(validate_template_id("template/name").is_err());
+        assert!(validate_template_id("").is_err());
     }
 }

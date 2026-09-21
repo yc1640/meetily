@@ -1,12 +1,14 @@
 // Tauri commands for built-in AI model management
 // Exposes model download, status, and management functionality to frontend
 
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use tauri::{AppHandle, Emitter, Manager, Runtime, State};
 use tokio::sync::Mutex;
 
 use super::model_manager::{DownloadProgress, ModelInfo, ModelManager};
+use super::models::get_available_models;
 
 const QWEN35_4B_RECOMMENDED_RAM_GB: u64 = 14;
 
@@ -187,7 +189,7 @@ pub async fn builtin_ai_download_model<R: Runtime>(
                 }),
             );
             Ok(())
-        },
+        }
         Err(e) => {
             let error_msg = e.to_string();
 
@@ -265,13 +267,72 @@ pub async fn builtin_ai_delete_model(
         .map_err(|e| e.to_string())
 }
 
+/// Add a compatible GGUF summary model that is already stored on this computer.
+/// The original file is referenced instead of copied.
+#[tauri::command]
+pub async fn builtin_ai_add_existing_model<R: Runtime>(
+    app: AppHandle<R>,
+    state: State<'_, ModelManagerState>,
+) -> Result<Option<String>, String> {
+    use tauri_plugin_dialog::DialogExt;
+
+    let app_for_dialog = app.clone();
+    let selected = tokio::task::spawn_blocking(move || {
+        app_for_dialog
+            .dialog()
+            .file()
+            .add_filter("GGUF models", &["gguf"])
+            .blocking_pick_file()
+    })
+    .await
+    .map_err(|error| format!("Failed to open the model picker: {error}"))?;
+
+    let Some(selected) = selected else {
+        return Ok(None);
+    };
+    let source = PathBuf::from(selected.to_string());
+    if !crate::model_reference::file_has_magic(&source, &[b"GGUF"])? {
+        return Err("The selected file is not a valid GGUF model.".to_string());
+    }
+
+    let selected_name = source
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or_default();
+
+    let model_def = get_available_models()
+        .into_iter()
+        .find(|model| model.gguf_file.eq_ignore_ascii_case(selected_name))
+        .ok_or_else(|| {
+            "Meetily could not identify this GGUF file. Keep the original filename of a supported built-in summary model and try again.".to_string()
+        })?;
+
+    let manager = {
+        let manager_lock = state.0.lock().await;
+        manager_lock
+            .as_ref()
+            .ok_or_else(|| "Model manager not initialized".to_string())?
+            .clone()
+    };
+    crate::model_reference::link_existing_model(
+        &source,
+        &manager.get_models_directory().join(&model_def.gguf_file),
+    )?;
+    manager
+        .scan_models()
+        .await
+        .map_err(|error| format!("Failed to refresh summary models: {error}"))?;
+
+    Ok(Some(model_def.name))
+}
+
 /// Check if a model is ready to use
 #[tauri::command]
 pub async fn builtin_ai_is_model_ready<R: Runtime>(
     app: AppHandle<R>,
     state: State<'_, ModelManagerState>,
     model_name: String,
-    refresh: Option<bool>,  // NEW: Optional refresh parameter
+    refresh: Option<bool>, // NEW: Optional refresh parameter
 ) -> Result<bool, String> {
     let manager = {
         // Ensure manager is initialized
@@ -343,7 +404,12 @@ pub async fn builtin_ai_get_available_summary_model<R: Runtime>(
     // Find first available summary model
     let available = all_models
         .iter()
-        .filter(|m| matches!(m.status, crate::summary::summary_engine::model_manager::ModelStatus::Available))
+        .filter(|m| {
+            matches!(
+                m.status,
+                crate::summary::summary_engine::model_manager::ModelStatus::Available
+            )
+        })
         .max_by_key(|m| summary_model_priority(&m.name))
         .map(|m| m.name.clone());
 
@@ -355,9 +421,7 @@ pub async fn builtin_ai_get_available_summary_model<R: Runtime>(
 // Startup Initialization & Utility Commands
 // ============================================================================
 
-pub async fn init_model_manager_at_startup<R: Runtime>(
-    app: &AppHandle<R>,
-) -> Result<(), String> {
+pub async fn init_model_manager_at_startup<R: Runtime>(app: &AppHandle<R>) -> Result<(), String> {
     let models_dir = app
         .path()
         .app_data_dir()
@@ -380,7 +444,6 @@ pub async fn init_model_manager_at_startup<R: Runtime>(
     log::info!("ModelManager initialized at startup");
     Ok(())
 }
-
 
 /// Get recommended summary model based on platform and system RAM.
 /// macOS → qwen3.5:4b

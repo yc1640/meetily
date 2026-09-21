@@ -7,6 +7,7 @@ export interface ModelInfo {
   speed: ProcessingSpeed;
   status: ModelStatus;
   description?: string;
+  is_external?: boolean;
 }
 
 export type ModelAccuracy = 'High' | 'Good' | 'Decent';
@@ -306,6 +307,10 @@ export class WhisperAPI {
 
   static async getModelsDirectory(): Promise<string> {
     return await invoke('whisper_get_models_directory');
+  }
+
+  static async addExistingModel(): Promise<string | null> {
+    return await invoke('whisper_add_existing_model');
   }
 
   static async downloadModel(modelName: string): Promise<void> {

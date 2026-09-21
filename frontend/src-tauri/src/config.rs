@@ -17,20 +17,123 @@ pub const DEFAULT_PARAKEET_MODEL: &str = "parakeet-tdt-0.6b-v3-int8";
 /// Format: (name, filename, size_mb, accuracy, speed, description)
 pub const WHISPER_MODEL_CATALOG: &[(&str, &str, u32, &str, &str, &str)] = &[
     // Standard f16 models (full precision)
-    ("tiny", "ggml-tiny.bin", 74, "Decent", "Very Fast", "Fastest processing, good for real-time use"),
-    ("base", "ggml-base.bin", 142, "Good", "Fast", "Good balance of speed and accuracy"),
-    ("small", "ggml-small.bin", 466, "Good", "Medium", "Better accuracy, moderate speed"),
-    ("medium", "ggml-medium.bin", 1463, "High", "Slow", "High accuracy for professional use"),
-    ("large-v3-turbo", "ggml-large-v3-turbo.bin", 1549, "High", "Medium", "Best accuracy with improved speed"),
-    ("large-v3", "ggml-large-v3.bin", 2951, "High", "Slow", "Most Accurate, latest large model"),
-
+    (
+        "tiny",
+        "ggml-tiny.bin",
+        74,
+        "Decent",
+        "Very Fast",
+        "Fastest processing, good for real-time use",
+    ),
+    (
+        "base",
+        "ggml-base.bin",
+        142,
+        "Good",
+        "Fast",
+        "Good balance of speed and accuracy",
+    ),
+    (
+        "small",
+        "ggml-small.bin",
+        466,
+        "Good",
+        "Medium",
+        "Better accuracy, moderate speed",
+    ),
+    (
+        "medium",
+        "ggml-medium.bin",
+        1463,
+        "High",
+        "Slow",
+        "High accuracy for professional use",
+    ),
+    (
+        "large-v3-turbo",
+        "ggml-large-v3-turbo.bin",
+        1549,
+        "High",
+        "Medium",
+        "Best accuracy with improved speed",
+    ),
+    (
+        "large-v3",
+        "ggml-large-v3.bin",
+        2951,
+        "High",
+        "Slow",
+        "Most Accurate, latest large model",
+    ),
     // Q5_1 quantized models (balanced speed/accuracy, slightly better quality than Q5_0)
-    ("tiny-q5_1", "ggml-tiny-q5_1.bin", 31, "Decent", "Very Fast", "Quantized tiny model, ~50% faster processing"),
-    ("base-q5_1", "ggml-base-q5_1.bin", 57, "Good", "Fast", "Quantized base model, good speed/accuracy balance"),
-    ("small-q5_1", "ggml-small-q5_1.bin", 181, "Good", "Fast", "Quantized small model, faster than f16 version"),
-
+    (
+        "tiny-q5_1",
+        "ggml-tiny-q5_1.bin",
+        31,
+        "Decent",
+        "Very Fast",
+        "Quantized tiny model, ~50% faster processing",
+    ),
+    (
+        "base-q5_1",
+        "ggml-base-q5_1.bin",
+        57,
+        "Good",
+        "Fast",
+        "Quantized base model, good speed/accuracy balance",
+    ),
+    (
+        "small-q5_1",
+        "ggml-small-q5_1.bin",
+        181,
+        "Good",
+        "Fast",
+        "Quantized small model, faster than f16 version",
+    ),
     // Q5_0 quantized models (balanced speed/accuracy)
-    ("medium-q5_0", "ggml-medium-q5_0.bin", 514, "High", "Medium", "Quantized medium model, professional quality"),
-    ("large-v3-turbo-q5_0", "ggml-large-v3-turbo-q5_0.bin", 547, "High", "Medium", "Quantized large model, best balance"),
-    ("large-v3-q5_0", "ggml-large-v3-q5_0.bin", 1031, "High", "Slow", "Quantized large model, high accuracy"),
+    (
+        "medium-q5_0",
+        "ggml-medium-q5_0.bin",
+        514,
+        "High",
+        "Medium",
+        "Quantized medium model, professional quality",
+    ),
+    (
+        "large-v3-turbo-q5_0",
+        "ggml-large-v3-turbo-q5_0.bin",
+        547,
+        "High",
+        "Medium",
+        "Quantized large model, best balance",
+    ),
+    (
+        "large-v3-q5_0",
+        "ggml-large-v3-q5_0.bin",
+        1031,
+        "High",
+        "Slow",
+        "Quantized large model, high accuracy",
+    ),
 ];
+
+/// Exact byte sizes published by the official ggerganov/whisper.cpp model repository.
+/// Approximate MB values are only for display; readiness checks must use these values so
+/// interrupted downloads cannot be mistaken for valid models.
+pub fn whisper_model_expected_bytes(model_name: &str) -> Option<u64> {
+    match model_name {
+        "tiny" => Some(77_691_713),
+        "base" => Some(147_951_465),
+        "small" => Some(487_601_967),
+        "medium" => Some(1_533_763_059),
+        "large-v3-turbo" => Some(1_624_555_275),
+        "large-v3" => Some(3_095_033_483),
+        "tiny-q5_1" => Some(32_152_673),
+        "base-q5_1" => Some(59_707_625),
+        "small-q5_1" => Some(190_085_487),
+        "medium-q5_0" => Some(539_212_467),
+        "large-v3-turbo-q5_0" => Some(574_041_195),
+        "large-v3-q5_0" => Some(1_081_140_203),
+        _ => None,
+    }
+}

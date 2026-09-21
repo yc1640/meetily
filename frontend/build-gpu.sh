@@ -14,6 +14,18 @@ NC='\033[0m' # No Color
 echo -e "${BLUE}🚀 Meetily GPU-Accelerated Build Script${NC}"
 echo ""
 
+# Resolve paths from the script location so the build works from any directory.
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+if [ ! -f "$SCRIPT_DIR/package.json" ]; then
+  echo -e "${RED}❌ Could not find package.json in $SCRIPT_DIR${NC}"
+  exit 1
+fi
+
+cd "$SCRIPT_DIR"
+FRONTEND_DIR="."
+
 # Export CUDA flags for Linux/NVIDIA
 if [[ "$OSTYPE" == "linux-gnu"* ]]; then
     export CMAKE_CUDA_ARCHITECTURES=75
@@ -36,21 +48,6 @@ command_exists() {
   command -v "$1" >/dev/null 2>&1
 }
 
-# Find the correct directory - we need to be in frontend root for npm commands
-if [ -f "package.json" ]; then
-  FRONTEND_DIR="."
-elif [ -f "frontend/package.json" ]; then
-  cd frontend || {
-    echo -e "${RED}❌ Failed to change to frontend directory${NC}"
-    exit 1
-  }
-  FRONTEND_DIR="frontend"
-else
-  echo -e "${RED}❌ Could not find package.json${NC}"
-  echo -e "${RED}   Make sure you're in the project root or frontend directory${NC}"
-  exit 1
-fi
-
 echo ""
 echo -e "${BLUE}📦 Building Meetily...${NC}"
 echo ""
@@ -68,17 +65,8 @@ fi
 # Detect GPU feature if not already set
 if [ -z "$TAURI_GPU_FEATURE" ]; then
     echo -e "${BLUE}🔍 Detecting GPU features...${NC}"
-    # Run the detection script and capture output
-    # We need to run it from frontend dir
-    if [ "$FRONTEND_DIR" != "." ]; then
-        cd "$FRONTEND_DIR"
-    fi
-    
+    # Run the detection script from the frontend directory.
     TAURI_GPU_FEATURE=$(node scripts/auto-detect-gpu.js)
-    
-    if [ "$FRONTEND_DIR" != "." ]; then
-        cd ..
-    fi
 fi
 
 if [ -n "$TAURI_GPU_FEATURE" ]; then
@@ -95,8 +83,7 @@ echo -e "${BLUE}🦙 Building llama-helper sidecar (release)...${NC}"
 HELPER_DIR="llama-helper"
 if [ ! -d "$HELPER_DIR" ]; then
     # Try to find it relative to script location
-    SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
-    HELPER_DIR="$SCRIPT_DIR/../llama-helper"
+    HELPER_DIR="$PROJECT_ROOT/llama-helper"
 fi
 
 if [ ! -d "$HELPER_DIR" ]; then
@@ -150,7 +137,7 @@ fi
 
 # The binary is in the workspace target directory, which is one level up from frontend
 # if we are in frontend dir.
-WORKSPACE_ROOT="$FRONTEND_DIR/.."
+WORKSPACE_ROOT="$PROJECT_ROOT"
 SRC_PATH="$WORKSPACE_ROOT/target/release/$BASE_BINARY"
 DEST_PATH="$BINARIES_DIR/$SIDECAR_BINARY"
 
@@ -187,4 +174,3 @@ else
   echo -e "${RED}❌ Build failed${NC}"
   exit 1
 fi
-

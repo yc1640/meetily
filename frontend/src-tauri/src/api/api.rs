@@ -13,7 +13,11 @@ use crate::{
         },
     },
     state::AppState,
-    summary::CustomOpenAIConfig,
+    summary::{
+        llm_client::{custom_openai_api_url, extract_responses_output_text},
+        CustomOpenAIConfig, CustomOpenAIReasoningEffort, CustomOpenAIVerbosity,
+        CustomOpenAIWireApi,
+    },
 };
 
 // Hardcoded server URL
@@ -99,6 +103,7 @@ pub struct GetApiKeyRequest {
 pub struct TranscriptConfig {
     pub provider: String,
     pub model: String,
+    pub endpoint: Option<String>,
     #[serde(rename = "apiKey")]
     pub api_key: Option<String>,
 }
@@ -107,6 +112,7 @@ pub struct TranscriptConfig {
 pub struct SaveTranscriptConfigRequest {
     pub provider: String,
     pub model: String,
+    pub endpoint: Option<String>,
     #[serde(rename = "apiKey")]
     pub api_key: Option<String>,
 }
@@ -128,7 +134,11 @@ pub struct MeetingDetails {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct MeetingTranscript {
     pub id: String,
+    /// Effective text used by copying and summary generation: polished when available.
     pub text: String,
+    pub original_text: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub polished_text: Option<String>,
     pub timestamp: String,
     // Recording-relative timestamps for audio-transcript synchronization
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -607,18 +617,37 @@ pub async fn api_get_transcript_config<R: Runtime>(
 
     match SettingsRepository::get_transcript_config(pool).await {
         Ok(Some(config)) => {
+            let model = if config.provider == "qwen3Asr" {
+                // Migrate former external-service model IDs to their managed MLX variants.
+                match config.model.as_str() {
+                    "Qwen/Qwen3-ASR-0.6B" | "Qwen3-ASR-0.6B" => {
+                        "mlx-community/Qwen3-ASR-0.6B-8bit".to_string()
+                    }
+                    "Qwen/Qwen3-ASR-1.7B" | "Qwen3-ASR-1.7B" => {
+                        "mlx-community/Qwen3-ASR-1.7B-8bit".to_string()
+                    }
+                    _ => config.model.clone(),
+                }
+            } else {
+                config.model.clone()
+            };
             log_info!(
                 "Found transcript config: provider={}, model={}",
                 &config.provider,
-                &config.model
+                &model
             );
             match SettingsRepository::get_transcript_api_key(pool, &config.provider).await {
                 Ok(api_key) => {
                     log_info!("Successfully retrieved transcript config and API key.");
                     Ok(Some(TranscriptConfig {
-                        provider: config.provider,
-                        model: config.model,
-                        api_key,
+                        provider: config.provider.clone(),
+                        model,
+                        endpoint: config.endpoint,
+                        api_key: if config.provider == "qwen3Asr" {
+                            None
+                        } else {
+                            config.api_key.or(api_key)
+                        },
                     }))
                 }
                 Err(e) => {
@@ -636,6 +665,7 @@ pub async fn api_get_transcript_config<R: Runtime>(
             Ok(Some(TranscriptConfig {
                 provider: "parakeet".to_string(),
                 model: crate::config::DEFAULT_PARAKEET_MODEL.to_string(),
+                endpoint: None,
                 api_key: None,
             }))
         }
@@ -652,6 +682,7 @@ pub async fn api_save_transcript_config<R: Runtime>(
     state: tauri::State<'_, AppState>,
     provider: String,
     model: String,
+    endpoint: Option<String>,
     api_key: Option<String>,
     _auth_token: Option<String>,
 ) -> Result<serde_json::Value, String> {
@@ -661,20 +692,17 @@ pub async fn api_save_transcript_config<R: Runtime>(
     );
     let pool = state.db_manager.pool();
 
-    if let Err(e) = SettingsRepository::save_transcript_config(pool, &provider, &model).await {
+    if let Err(e) = SettingsRepository::save_transcript_config(
+        pool,
+        &provider,
+        &model,
+        endpoint.as_deref().filter(|value| !value.trim().is_empty()),
+        api_key.as_deref().filter(|value| !value.trim().is_empty()),
+    )
+    .await
+    {
         log_error!("Failed to save transcript config: {}", e);
         return Err(e.to_string());
-    }
-
-    if let Some(key) = api_key {
-        if !key.is_empty() {
-            log_info!("API key provided, saving for transcript provider...");
-            if let Err(e) = SettingsRepository::save_transcript_api_key(pool, &provider, &key).await
-            {
-                log_error!("Failed to save transcript API key: {}", e);
-                return Err(e.to_string());
-            }
-        }
     }
 
     log_info!("Successfully saved transcript configuration.");
@@ -815,7 +843,10 @@ pub async fn api_get_meeting_metadata<R: Runtime>(
     meeting_id: String,
     state: tauri::State<'_, AppState>,
 ) -> Result<MeetingMetadata, String> {
-    log_info!("api_get_meeting_metadata called for meeting_id: {}", meeting_id);
+    log_info!(
+        "api_get_meeting_metadata called for meeting_id: {}",
+        meeting_id
+    );
 
     let pool = state.db_manager.pool();
 
@@ -859,7 +890,9 @@ pub async fn api_get_meeting_transcripts<R: Runtime>(
 
     let pool = state.db_manager.pool();
 
-    match MeetingsRepository::get_meeting_transcripts_paginated(pool, &meeting_id, limit, offset).await {
+    match MeetingsRepository::get_meeting_transcripts_paginated(pool, &meeting_id, limit, offset)
+        .await
+    {
         Ok((transcripts, total_count)) => {
             log_info!(
                 "Successfully retrieved {} transcripts for meeting {} (total: {})",
@@ -871,13 +904,22 @@ pub async fn api_get_meeting_transcripts<R: Runtime>(
             // Convert Transcript to MeetingTranscript
             let meeting_transcripts = transcripts
                 .into_iter()
-                .map(|t| MeetingTranscript {
-                    id: t.id,
-                    text: t.transcript,
-                    timestamp: t.timestamp,
-                    audio_start_time: t.audio_start_time,
-                    audio_end_time: t.audio_end_time,
-                    duration: t.duration,
+                .map(|t| {
+                    let effective_text = t
+                        .polished_transcript
+                        .as_deref()
+                        .unwrap_or(&t.transcript)
+                        .to_string();
+                    MeetingTranscript {
+                        id: t.id,
+                        text: effective_text,
+                        original_text: t.transcript,
+                        polished_text: t.polished_transcript,
+                        timestamp: t.timestamp,
+                        audio_start_time: t.audio_start_time,
+                        audio_end_time: t.audio_end_time,
+                        duration: t.duration,
+                    }
                 })
                 .collect::<Vec<_>>();
 
@@ -890,7 +932,11 @@ pub async fn api_get_meeting_transcripts<R: Runtime>(
             })
         }
         Err(e) => {
-            log_error!("Error retrieving transcripts for meeting {}: {}", meeting_id, e);
+            log_error!(
+                "Error retrieving transcripts for meeting {}: {}",
+                meeting_id,
+                e
+            );
             Err(format!("Failed to retrieve transcripts: {}", e))
         }
     }
@@ -958,7 +1004,10 @@ pub async fn api_save_transcript<R: Runtime>(
         .collect::<Result<Vec<_>, _>>()
         .map_err(|e| {
             log_error!("Failed to parse transcript segments: {}", e);
-            format!("Invalid transcript data format: {}. Please check the data structure.", e)
+            format!(
+                "Invalid transcript data format: {}. Please check the data structure.",
+                e
+            )
         })?;
 
     // Log parsed segments count and first segment details
@@ -1176,8 +1225,9 @@ pub async fn api_save_custom_openai_config<R: Runtime>(
     api_key: Option<String>,
     model: String,
     max_tokens: Option<i32>,
-    temperature: Option<f32>,
-    top_p: Option<f32>,
+    wire_api: Option<CustomOpenAIWireApi>,
+    reasoning_effort: Option<CustomOpenAIReasoningEffort>,
+    verbosity: Option<CustomOpenAIVerbosity>,
 ) -> Result<serde_json::Value, String> {
     log_info!(
         "api_save_custom_openai_config called: endpoint='{}', model='{}'",
@@ -1194,21 +1244,11 @@ pub async fn api_save_custom_openai_config<R: Runtime>(
     }
 
     // Validate endpoint URL format
+    let endpoint = endpoint.trim();
     if !endpoint.starts_with("http://") && !endpoint.starts_with("https://") {
         return Err("Endpoint must start with http:// or https://".to_string());
     }
 
-    // Validate optional numeric parameters
-    if let Some(temp) = temperature {
-        if !(0.0..=2.0).contains(&temp) {
-            return Err("Temperature must be between 0.0 and 2.0".to_string());
-        }
-    }
-    if let Some(top) = top_p {
-        if !(0.0..=1.0).contains(&top) {
-            return Err("Top P must be between 0.0 and 1.0".to_string());
-        }
-    }
     if let Some(tokens) = max_tokens {
         if tokens < 1 {
             return Err("Max tokens must be at least 1".to_string());
@@ -1216,19 +1256,23 @@ pub async fn api_save_custom_openai_config<R: Runtime>(
     }
 
     let config = CustomOpenAIConfig {
-        endpoint: endpoint.trim().to_string(),
+        endpoint: endpoint.to_string(),
         api_key: api_key.filter(|k| !k.trim().is_empty()),
         model: model.trim().to_string(),
         max_tokens,
-        temperature,
-        top_p,
+        wire_api: wire_api.unwrap_or_default(),
+        reasoning_effort: reasoning_effort.unwrap_or_default(),
+        verbosity: verbosity.unwrap_or_default(),
     };
 
     let pool = state.db_manager.pool();
 
     match SettingsRepository::save_custom_openai_config(pool, &config).await {
         Ok(()) => {
-            log_info!("✅ Successfully saved custom OpenAI config for endpoint: {}", config.endpoint);
+            log_info!(
+                "✅ Successfully saved custom OpenAI config for endpoint: {}",
+                config.endpoint
+            );
             Ok(serde_json::json!({
                 "status": "success",
                 "message": "Custom OpenAI configuration saved successfully"
@@ -1254,8 +1298,11 @@ pub async fn api_get_custom_openai_config<R: Runtime>(
     match SettingsRepository::get_custom_openai_config(pool).await {
         Ok(config) => {
             if let Some(ref c) = config {
-                log_info!("✅ Found custom OpenAI config: endpoint='{}', model='{}'",
-                    c.endpoint, c.model);
+                log_info!(
+                    "✅ Found custom OpenAI config: endpoint='{}', model='{}'",
+                    c.endpoint,
+                    c.model
+                );
             } else {
                 log_info!("No custom OpenAI config found");
             }
@@ -1276,6 +1323,9 @@ pub async fn api_test_custom_openai_connection<R: Runtime>(
     endpoint: String,
     api_key: Option<String>,
     model: String,
+    wire_api: Option<CustomOpenAIWireApi>,
+    reasoning_effort: Option<CustomOpenAIReasoningEffort>,
+    verbosity: Option<CustomOpenAIVerbosity>,
 ) -> Result<serde_json::Value, String> {
     log_info!(
         "api_test_custom_openai_connection called: endpoint='{}', model='{}'",
@@ -1284,24 +1334,37 @@ pub async fn api_test_custom_openai_connection<R: Runtime>(
     );
 
     // Validate endpoint URL format
+    let endpoint = endpoint.trim();
     if !endpoint.starts_with("http://") && !endpoint.starts_with("https://") {
         return Err("Endpoint must start with http:// or https://".to_string());
     }
 
-    // Build the URL - append /chat/completions to the base endpoint
-    let url = format!("{}/chat/completions", endpoint.trim_end_matches('/'));
-
-    // Create a minimal test request
-    let test_request = serde_json::json!({
-        "model": model,
-        "messages": [
-            {
-                "role": "user",
-                "content": "Hi"
+    let wire_api = wire_api.unwrap_or_default();
+    let url = custom_openai_api_url(endpoint, wire_api);
+    let test_request = match wire_api {
+        CustomOpenAIWireApi::Responses => serde_json::json!({
+            "model": model,
+            "input": "Reply only with OK.",
+            "store": false,
+            "max_output_tokens": 128,
+            "reasoning": {
+                "effort": reasoning_effort.unwrap_or_default()
+            },
+            "text": {
+                "verbosity": verbosity.unwrap_or_default()
             }
-        ],
-        "max_tokens": 5
-    });
+        }),
+        CustomOpenAIWireApi::ChatCompletions => serde_json::json!({
+            "model": model,
+            "messages": [
+                {
+                    "role": "user",
+                    "content": "Reply only with OK."
+                }
+            ],
+            "max_tokens": 16
+        }),
+    };
 
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(30))
@@ -1324,49 +1387,63 @@ pub async fn api_test_custom_openai_connection<R: Runtime>(
             let response_text = response.text().await.unwrap_or_default();
 
             if status.is_success() {
-                // Parse response as JSON to verify it's a valid OpenAI-compatible response
                 match serde_json::from_str::<serde_json::Value>(&response_text) {
                     Ok(json) => {
-                        // Verify the response has the expected OpenAI structure
-                        if let Some(choices) = json.get("choices") {
-                            if let Some(choices_array) = choices.as_array() {
-                                if !choices_array.is_empty() {
-                                    // Verify the first choice has the required message structure
-                                    if let Some(first_choice) = choices_array.get(0) {
-                                        // Check if message.content field exists (can be empty string)
-                                        let has_message_structure = first_choice
-                                            .get("message")
-                                            .and_then(|m| {
-                                                m.get("content")
-                                                .or_else(|| m.get("reasoning_content"))
-                                            })
-                                            .is_some();
-
-                                        if has_message_structure {
-                                            log_info!("✅ Custom OpenAI connection test successful - response validated");
-                                            return Ok(serde_json::json!({
-                                                "status": "success",
-                                                "message": "Connection successful and response validated",
-                                                "http_status": status.as_u16()
-                                            }));
-                                        }
-                                    }
-                                }
+                        let is_valid = match wire_api {
+                            CustomOpenAIWireApi::Responses => {
+                                extract_responses_output_text(&json).is_some()
+                                    || json
+                                        .get("output")
+                                        .and_then(|output| output.as_array())
+                                        .is_some()
                             }
-                        }
+                            CustomOpenAIWireApi::ChatCompletions => json
+                                .get("choices")
+                                .and_then(|choices| choices.as_array())
+                                .and_then(|choices| choices.first())
+                                .and_then(|choice| choice.get("message"))
+                                .and_then(|message| message.get("content"))
+                                .is_some(),
+                        };
 
-                        // Response was 200 but doesn't match OpenAI format
-                        log_warn!("⚠️ Endpoint returned 200 but response doesn't match OpenAI format: {}", response_text);
-                        Err("Endpoint is reachable but doesn't appear to be OpenAI-compatible. Response is missing 'choices' array or 'message.content' / 'message.reasoning_content' field.".to_string())
+                        if is_valid {
+                            log_info!(
+                                "✅ Custom OpenAI connection test successful - response validated"
+                            );
+                            Ok(serde_json::json!({
+                                "status": "success",
+                                "message": "Connection successful and response validated",
+                                "http_status": status.as_u16()
+                            }))
+                        } else {
+                            log_warn!("⚠️ Endpoint returned 200 but response doesn't match the selected API protocol");
+                            Err(format!(
+                                "Endpoint is reachable but the response does not match the selected {:?} protocol.",
+                                wire_api
+                            ))
+                        }
                     }
                     Err(e) => {
-                        log_warn!("⚠️ Endpoint returned 200 but response is not valid JSON: {}", e);
-                        Err(format!("Endpoint is reachable but returned invalid JSON: {}. Response: {}", e, response_text))
+                        log_warn!(
+                            "⚠️ Endpoint returned 200 but response is not valid JSON: {}",
+                            e
+                        );
+                        Err(format!(
+                            "Endpoint is reachable but returned invalid JSON: {}. Response: {}",
+                            e, response_text
+                        ))
                     }
                 }
             } else {
-                log_warn!("⚠️ Custom OpenAI connection test failed with status {}: {}", status, response_text);
-                Err(format!("Connection failed with status {}: {}", status, response_text))
+                log_warn!(
+                    "⚠️ Custom OpenAI connection test failed with status {}: {}",
+                    status,
+                    response_text
+                );
+                Err(format!(
+                    "Connection failed with status {}: {}",
+                    status, response_text
+                ))
             }
         }
         Err(e) => {

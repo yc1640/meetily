@@ -28,6 +28,7 @@ interface RecordingState {
   isRecording: boolean;           // Is a recording session active
   isPaused: boolean;              // Is the recording paused
   isActive: boolean;              // Is actively recording (recording && !paused)
+  transcriptionEnabled: boolean;  // Session mode captured when recording starts
   recordingDuration: number | null;  // Total duration including pauses
   activeDuration: number | null;     // Active recording time (excluding pauses)
 
@@ -61,6 +62,7 @@ export function RecordingStateProvider({ children }: { children: React.ReactNode
     isRecording: false,
     isPaused: false,
     isActive: false,
+    transcriptionEnabled: false,
     recordingDuration: null,
     activeDuration: null,
     status: RecordingStatus.IDLE,  // NEW: Initialize with IDLE status
@@ -91,6 +93,7 @@ export function RecordingStateProvider({ children }: { children: React.ReactNode
       setState(prev => ({
         ...prev,
         isRecording: backendState.is_recording,
+        transcriptionEnabled: backendState.transcription_enabled,
         isPaused: backendState.is_paused,
         isActive: backendState.is_active,
         recordingDuration: backendState.recording_duration,
@@ -137,11 +140,12 @@ export function RecordingStateProvider({ children }: { children: React.ReactNode
     const setupListeners = async () => {
       try {
         // Recording started
-        const unlistenStarted = await recordingService.onRecordingStarted(() => {
+        const unlistenStarted = await recordingService.onRecordingStarted((payload) => {
           console.log('[RecordingStateContext] Recording started event');
           setState(prev => ({
             ...prev,
             isRecording: true,
+            transcriptionEnabled: payload.transcription_enabled,
             isPaused: false,
             isActive: true,
             status: RecordingStatus.RECORDING,  // NEW: Set status to RECORDING
@@ -169,6 +173,7 @@ export function RecordingStateProvider({ children }: { children: React.ReactNode
               status: newStatus,
               statusMessage: newStatus === RecordingStatus.STOPPING ? 'Stopping recording...' : prev.statusMessage,
               isRecording: false,
+              transcriptionEnabled: false,
               isPaused: false,
               isActive: false,
               recordingDuration: null,

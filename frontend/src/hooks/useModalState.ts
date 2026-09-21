@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { listen } from '@tauri-apps/api/event';
 import { toast } from 'sonner';
 import { TranscriptModelProps } from '@/components/TranscriptSettings';
+import { useAppLanguage } from '@/contexts/AppLanguageContext';
 
 export type ModalType =
   | 'modelSettings'
@@ -44,6 +45,7 @@ interface UseModalStateReturn {
  * - Auto-close on model download completion
  */
 export function useModalState(transcriptModelConfig?: TranscriptModelProps): UseModalStateReturn {
+  const { t } = useAppLanguage();
   // Modal visibility state
   const [modals, setModals] = useState<ModalState>({
     modelSettings: false,
@@ -134,11 +136,14 @@ export function useModalState(transcriptModelConfig?: TranscriptModelProps): Use
         console.log('Setting up transcription-error listener...');
         unlistenFn = await listen<{ error: string, userMessage: string, actionable: boolean }>('transcription-error', (event) => {
           console.log('Transcription error received:', event.payload);
-          const { userMessage, actionable } = event.payload;
+          const { error, userMessage, actionable } = event.payload;
 
           if (actionable) {
             // This is a model-related error that requires user action
-            showModal('modelSelector', userMessage);
+            showModal(
+              'modelSelector',
+              `${t('transcriptionSetupRequiredDescription')}\n\n${error || userMessage}`,
+            );
           } else {
             // Show toast instead of modal for non-actionable errors (consistent with sidebar)
             toast.error('', {
@@ -161,7 +166,7 @@ export function useModalState(transcriptModelConfig?: TranscriptModelProps): Use
         unlistenFn();
       }
     };
-  }, [showModal]);
+  }, [showModal, t]);
 
   // Listen for model download completion to auto-close modal
   useEffect(() => {
@@ -175,7 +180,7 @@ export function useModalState(transcriptModelConfig?: TranscriptModelProps): Use
 
         // Auto-close modal if the downloaded model matches the selected one
         if (transcriptModelConfig?.provider === 'localWhisper' && transcriptModelConfig?.model === modelName) {
-          toast.success('Model ready! Closing window...', { duration: 1500 });
+          toast.success(t('modelReadyClosing'), { duration: 1500 });
           setTimeout(() => hideModal('modelSelector'), 1500);
         }
       });
@@ -187,7 +192,7 @@ export function useModalState(transcriptModelConfig?: TranscriptModelProps): Use
     };
 
     setupDownloadListeners();
-  }, [transcriptModelConfig, hideModal]);
+  }, [transcriptModelConfig, hideModal, t]);
 
   return {
     modals,

@@ -1,8 +1,8 @@
-use crate::whisper_engine::{ModelInfo, WhisperEngine};
-use std::sync::{Arc, Mutex};
-use std::path::PathBuf;
-use tauri::{command, Emitter, Manager, AppHandle, Runtime};
 use crate::config::WHISPER_MODEL_CATALOG;
+use crate::whisper_engine::{ModelInfo, WhisperEngine};
+use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
+use tauri::{command, AppHandle, Emitter, Manager, Runtime};
 
 // Global whisper engine
 pub static WHISPER_ENGINE: Mutex<Option<Arc<WhisperEngine>>> = Mutex::new(None);
@@ -13,7 +13,9 @@ static MODELS_DIR: Mutex<Option<PathBuf>> = Mutex::new(None);
 /// Initialize the models directory path using app_data_dir
 /// This should be called during app setup before whisper_init
 pub fn set_models_directory<R: Runtime>(app: &AppHandle<R>) {
-    let app_data_dir = app.path().app_data_dir()
+    let app_data_dir = app
+        .path()
+        .app_data_dir()
         .expect("Failed to get app data dir");
 
     let models_dir = app_data_dir.join("models");
@@ -75,8 +77,8 @@ pub async fn whisper_get_available_models() -> Result<Vec<ModelInfo>, String> {
 fn discover_models_standalone() -> Result<Vec<ModelInfo>, String> {
     use crate::whisper_engine::ModelStatus;
 
-    let models_dir = get_models_directory()
-        .ok_or_else(|| "Models directory not initialized".to_string())?;
+    let models_dir =
+        get_models_directory().ok_or_else(|| "Models directory not initialized".to_string())?;
 
     // Whisper models are stored directly in the models directory (not in a whisper subdirectory)
     let whisper_dir = models_dir.clone();
@@ -93,9 +95,15 @@ fn discover_models_standalone() -> Result<Vec<ModelInfo>, String> {
         let status = if model_path.exists() {
             match std::fs::metadata(&model_path) {
                 Ok(metadata) => {
-                    let file_size_mb = metadata.len() / (1024 * 1024);
-                    if file_size_mb >= 1 {
+                    let expected_size = crate::config::whisper_model_expected_bytes(name)
+                        .unwrap_or(size_mb as u64 * 1024 * 1024);
+                    if metadata.len() == expected_size {
                         ModelStatus::Available
+                    } else if metadata.len() > 0 {
+                        ModelStatus::Corrupted {
+                            file_size: metadata.len(),
+                            expected_min_size: expected_size,
+                        }
                     } else {
                         ModelStatus::Missing
                     }
@@ -106,6 +114,9 @@ fn discover_models_standalone() -> Result<Vec<ModelInfo>, String> {
             ModelStatus::Missing
         };
 
+        let is_external = std::fs::symlink_metadata(&model_path)
+            .map(|metadata| metadata.file_type().is_symlink())
+            .unwrap_or(false);
         models.push(ModelInfo {
             name: name.to_string(),
             path: model_path,
@@ -114,10 +125,14 @@ fn discover_models_standalone() -> Result<Vec<ModelInfo>, String> {
             accuracy: accuracy.to_string(),
             speed: speed.to_string(),
             description: description.to_string(),
+            is_external,
         });
     }
 
-    let downloaded_count = models.iter().filter(|m| matches!(m.status, ModelStatus::Available)).count();
+    let downloaded_count = models
+        .iter()
+        .filter(|m| matches!(m.status, ModelStatus::Available))
+        .count();
     log::info!("Found {} downloaded Whisper models", downloaded_count);
 
     Ok(models)
@@ -126,7 +141,7 @@ fn discover_models_standalone() -> Result<Vec<ModelInfo>, String> {
 #[command]
 pub async fn whisper_load_model(
     app_handle: tauri::AppHandle,
-    model_name: String
+    model_name: String,
 ) -> Result<(), String> {
     let engine = {
         let guard = WHISPER_ENGINE.lock().unwrap();
@@ -343,28 +358,55 @@ pub async fn whisper_validate_model_ready_with_config<R: tauri::Runtime>(
             .filter(|model| matches!(model.status, crate::whisper_engine::ModelStatus::Available))
             .collect();
 
-        if available_models.is_empty() {
-            return Err(
-                "No Whisper models are available. Please download a model to enable transcription."
-                    .to_string(),
-            );
-        }
-
-        // Try to load user's configured model if specified
+        // Respect the user's explicit model choice. Falling back silently can make a corrupt
+        // selected model look like a language/accuracy problem in another model.
         let model_name = if let Some(configured_model) = model_to_load {
-            // Check if configured model is available
-            if available_models.iter().any(|m| m.name == configured_model) {
-                log::info!("Loading user's configured model: {}", configured_model);
-                configured_model
-            } else {
-                log::warn!(
-                    "Configured model '{}' not found, falling back to first available: {}",
-                    configured_model,
-                    available_models[0].name
-                );
-                available_models[0].name.clone()
+            let configured_info = models
+                .iter()
+                .find(|model| model.name == configured_model)
+                .ok_or_else(|| {
+                    format!(
+                        "Configured Whisper model '{}' is unknown.",
+                        configured_model
+                    )
+                })?;
+            match &configured_info.status {
+                crate::whisper_engine::ModelStatus::Available => {
+                    log::info!("Loading user's configured model: {}", configured_model);
+                    configured_model
+                }
+                crate::whisper_engine::ModelStatus::Corrupted { .. } => {
+                    return Err(format!(
+                        "Configured Whisper model '{}' is corrupted or incomplete. Delete it and download it again in Settings > Transcription.",
+                        configured_model
+                    ));
+                }
+                crate::whisper_engine::ModelStatus::Downloading { .. } => {
+                    return Err(format!(
+                        "Configured Whisper model '{}' is still downloading.",
+                        configured_model
+                    ));
+                }
+                crate::whisper_engine::ModelStatus::Missing => {
+                    return Err(format!(
+                        "Configured Whisper model '{}' is not downloaded. Download it in Settings > Transcription.",
+                        configured_model
+                    ));
+                }
+                crate::whisper_engine::ModelStatus::Error(error) => {
+                    return Err(format!(
+                        "Configured Whisper model '{}' has an error: {}",
+                        configured_model, error
+                    ));
+                }
             }
         } else {
+            if available_models.is_empty() {
+                return Err(
+                    "No Whisper models are available. Please download a model to enable transcription."
+                        .to_string(),
+                );
+            }
             // No configured model, use first available
             log::info!(
                 "No configured model, loading first available: {}",
@@ -416,6 +458,71 @@ pub async fn whisper_get_models_directory() -> Result<String, String> {
     } else {
         Err("Whisper engine not initialized".to_string())
     }
+}
+
+/// Select a compatible Whisper GGML model owned by another application and
+/// reference it without copying the model file.
+#[command]
+pub async fn whisper_add_existing_model<R: Runtime>(
+    app_handle: AppHandle<R>,
+) -> Result<Option<String>, String> {
+    use tauri_plugin_dialog::DialogExt;
+
+    let app_for_dialog = app_handle.clone();
+    let selected = tokio::task::spawn_blocking(move || {
+        app_for_dialog
+            .dialog()
+            .file()
+            .add_filter("Whisper GGML models", &["bin"])
+            .blocking_pick_file()
+    })
+    .await
+    .map_err(|error| format!("Failed to open the model picker: {error}"))?;
+
+    let Some(selected) = selected else {
+        return Ok(None);
+    };
+    let source = PathBuf::from(selected.to_string());
+    let metadata = std::fs::metadata(&source)
+        .map_err(|error| format!("Failed to inspect the selected model: {error}"))?;
+    let file_size = metadata.len();
+
+    let (model_name, file_name) = WHISPER_MODEL_CATALOG
+        .iter()
+        .find_map(|(name, file_name, _, _, _, _)| {
+            (crate::config::whisper_model_expected_bytes(name) == Some(file_size))
+                .then_some((*name, *file_name))
+        })
+        .ok_or_else(|| {
+            format!(
+                "The selected file is not one of Meetily's supported Whisper GGML models ({} bytes).",
+                file_size
+            )
+        })?;
+
+    if !crate::model_reference::file_has_magic(
+        &source,
+        &[b"ggml", b"GGUF", b"ggmf", b"lmgg", b"FUGU", b"fmgg"],
+    )? {
+        return Err("The selected file does not have a valid GGML/GGUF header.".to_string());
+    }
+
+    let models_dir = get_models_directory()
+        .ok_or_else(|| "Whisper models directory not initialized".to_string())?;
+    crate::model_reference::link_existing_model(&source, &models_dir.join(file_name))?;
+
+    let engine = {
+        let guard = WHISPER_ENGINE.lock().unwrap();
+        guard.as_ref().cloned()
+    };
+    if let Some(engine) = engine {
+        engine
+            .discover_models()
+            .await
+            .map_err(|error| format!("Failed to refresh Whisper models: {error}"))?;
+    }
+
+    Ok(Some(model_name.to_string()))
 }
 
 #[command]
@@ -521,8 +628,8 @@ pub async fn whisper_delete_corrupted_model(model_name: String) -> Result<String
 /// Open the models folder in the system file explorer
 #[command]
 pub async fn open_models_folder() -> Result<(), String> {
-    let models_dir = get_models_directory()
-        .ok_or_else(|| "Models directory not initialized".to_string())?;
+    let models_dir =
+        get_models_directory().ok_or_else(|| "Models directory not initialized".to_string())?;
 
     // Ensure directory exists before trying to open it
     if !models_dir.exists() {

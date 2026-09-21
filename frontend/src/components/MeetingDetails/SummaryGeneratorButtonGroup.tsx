@@ -14,15 +14,22 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
-import { Sparkles, Settings, Loader2, FileText, Check, Square } from 'lucide-react';
+import { Sparkles, Settings, Loader2, FileText, Check, Square, SlidersHorizontal, ListFilter } from 'lucide-react';
 import Analytics from '@/lib/analytics';
 import { invoke } from '@tauri-apps/api/core';
 import { toast } from 'sonner';
 import { useState, useEffect, useRef, ReactNode } from 'react';
 import { isOllamaNotInstalledError } from '@/lib/utils';
 import { BuiltInModelInfo } from '@/lib/builtin-ai';
+import { useAppLanguage } from '@/contexts/AppLanguageContext';
+import { SummaryTemplateInfo } from '@/hooks/meeting-details/useTemplates';
+import { TemplateManagerDialog } from './TemplateManagerDialog';
+import { SummaryDetailLevel } from '@/types';
 
 interface SummaryGeneratorButtonGroupProps {
   languageSlot?: ReactNode;
@@ -33,9 +40,12 @@ interface SummaryGeneratorButtonGroupProps {
   onStopGeneration: () => void;
   customPrompt: string;
   summaryStatus: 'idle' | 'processing' | 'summarizing' | 'regenerating' | 'completed' | 'error';
-  availableTemplates: Array<{ id: string, name: string, description: string }>;
+  availableTemplates: SummaryTemplateInfo[];
   selectedTemplate: string;
+  summaryDetailLevel: SummaryDetailLevel;
+  onSummaryDetailLevelChange: (level: SummaryDetailLevel) => void;
   onTemplateSelect: (templateId: string, templateName: string) => void;
+  onTemplatesChanged: () => Promise<void>;
   hasTranscripts?: boolean;
   hasSummary?: boolean;
   isModelConfigLoading?: boolean;
@@ -52,15 +62,47 @@ export function SummaryGeneratorButtonGroup({
   summaryStatus,
   availableTemplates,
   selectedTemplate,
+  summaryDetailLevel,
+  onSummaryDetailLevelChange,
   onTemplateSelect,
+  onTemplatesChanged,
   hasTranscripts = true,
   hasSummary = false,
   isModelConfigLoading = false,
   onOpenModelSettings,
   languageSlot
 }: SummaryGeneratorButtonGroupProps) {
+  const { t } = useAppLanguage();
   const [isCheckingModels, setIsCheckingModels] = useState(false);
   const [settingsDialogOpen, setSettingsDialogOpen] = useState(false);
+  const [templateManagerOpen, setTemplateManagerOpen] = useState(false);
+  const selectedTemplateName = availableTemplates.find(
+    (template) => template.id === selectedTemplate,
+  )?.name;
+  const detailOptions: Array<{
+    value: SummaryDetailLevel;
+    label: string;
+    description: string;
+  }> = [
+    {
+      value: 'concise',
+      label: t('summaryDetailConcise'),
+      description: t('summaryDetailConciseDescription'),
+    },
+    {
+      value: 'standard',
+      label: t('summaryDetailStandard'),
+      description: t('summaryDetailStandardDescription'),
+    },
+    {
+      value: 'detailed',
+      label: t('summaryDetailDetailed'),
+      description: t('summaryDetailDetailedDescription'),
+    },
+  ];
+  const selectedDetailLabel = detailOptions.find(
+    (option) => option.value === summaryDetailLevel,
+  )?.label;
 
   // Expose the function to open the modal via callback registration
   useEffect(() => {
@@ -254,10 +296,10 @@ export function SummaryGeneratorButtonGroup({
             Analytics.trackButtonClick('stop_summary_generation', 'meeting_details');
             onStopGeneration();
           }}
-          title="Stop summary generation"
+          title={t('stopSummaryGeneration')}
         >
           <Square className="xl:mr-2" size={18} fill="currentColor" />
-          <span className="hidden lg:inline xl:inline">Stop</span>
+          <span className="hidden xl:inline">{t('stop')}</span>
         </Button>
       ) : (
         <Button
@@ -271,21 +313,21 @@ export function SummaryGeneratorButtonGroup({
           disabled={isCheckingModels || isModelConfigLoading}
           title={
             isModelConfigLoading
-              ? 'Loading model configuration...'
+              ? t('loadingModelConfiguration')
               : isCheckingModels
-                ? 'Checking models...'
-                : hasSummary ? 'Regenerate AI Summary' : 'Generate AI Summary'
+                ? t('checkingModels')
+                : hasSummary ? t('regenerateSummary') : t('generateSummary')
           }
         >
           {isCheckingModels || isModelConfigLoading ? (
             <>
               <Loader2 className="animate-spin xl:mr-2" size={18} />
-              <span className="hidden xl:inline">Processing...</span>
+              <span className="hidden xl:inline">{t('processingRecording')}</span>
             </>
           ) : (
             <>
               <Sparkles className="xl:mr-2" size={18} />
-              <span className="hidden lg:inline xl:inline">{hasSummary ? 'Regenerate Summary' : 'Generate Summary'}</span>
+              <span className="hidden xl:inline">{hasSummary ? t('regenerateSummary') : t('generateSummary')}</span>
             </>
           )}
         </Button>
@@ -293,23 +335,58 @@ export function SummaryGeneratorButtonGroup({
 
       {languageSlot}
 
+      {/* Summary detail level */}
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <Button
+            variant="outline"
+            size="sm"
+            title={`${t('summaryDetailLevel')}: ${selectedDetailLabel}`}
+          >
+            <ListFilter />
+            <span className="hidden xl:inline">{selectedDetailLabel}</span>
+          </Button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end" className="w-80">
+          <DropdownMenuRadioGroup
+            value={summaryDetailLevel}
+            onValueChange={(value) => onSummaryDetailLevelChange(value as SummaryDetailLevel)}
+          >
+            {detailOptions.map((option) => (
+              <DropdownMenuRadioItem
+                key={option.value}
+                value={option.value}
+                className="items-start py-2.5"
+              >
+                <span className="min-w-0">
+                  <span className="block font-medium leading-5">{option.label}</span>
+                  <span className="mt-0.5 block text-xs leading-4 text-muted-foreground">
+                    {option.description}
+                  </span>
+                </span>
+              </DropdownMenuRadioItem>
+            ))}
+          </DropdownMenuRadioGroup>
+        </DropdownMenuContent>
+      </DropdownMenu>
+
       {/* Settings button */}
       <Dialog open={settingsDialogOpen} onOpenChange={setSettingsDialogOpen}>
         <DialogTrigger asChild>
           <Button
             variant="outline"
             size="sm"
-            title="Summary Settings"
+            title={t('summarySettings')}
           >
             <Settings />
-            <span className="hidden lg:inline">AI Model</span>
+            <span className="hidden xl:inline">{t('aiModel')}</span>
           </Button>
         </DialogTrigger>
         <DialogContent
           aria-describedby={undefined}
         >
           <VisuallyHidden>
-            <DialogTitle>Model Settings</DialogTitle>
+            <DialogTitle>{t('summarySettings')}</DialogTitle>
           </VisuallyHidden>
           <ModelSettingsModal
             onSave={async (config) => {
@@ -331,30 +408,52 @@ export function SummaryGeneratorButtonGroup({
             <Button
               variant="outline"
               size="sm"
-              title="Select summary template"
+              title={t('selectSummaryTemplate')}
             >
               <FileText />
-              <span className="hidden lg:inline">Template</span>
+              <span className="hidden max-w-40 truncate xl:inline">
+                {selectedTemplateName ?? t('template')}
+              </span>
             </Button>
           </DropdownMenuTrigger>
-          <DropdownMenuContent align="end">
+          <DropdownMenuContent align="end" className="w-80">
             {availableTemplates.map((template) => (
               <DropdownMenuItem
                 key={template.id}
                 onClick={() => onTemplateSelect(template.id, template.name)}
-                title={template.description}
-                className="flex items-center justify-between gap-2"
+                className="flex items-start justify-between gap-3 py-2.5"
               >
-                <span>{template.name}</span>
+                <span className="min-w-0">
+                  <span className="block font-medium leading-5">{template.name}</span>
+                  <span className="mt-0.5 block text-xs leading-4 text-muted-foreground">
+                    {template.description}
+                  </span>
+                </span>
                 {selectedTemplate === template.id && (
-                  <Check className="h-4 w-4 text-green-600" />
+                  <Check className="mt-0.5 h-4 w-4 shrink-0 text-green-600" />
                 )}
               </DropdownMenuItem>
             ))}
-
+            <DropdownMenuSeparator />
+            <DropdownMenuItem
+              className="py-2.5 font-medium"
+              onClick={() => setTemplateManagerOpen(true)}
+            >
+              <SlidersHorizontal className="mr-2 h-4 w-4" />
+              {t('manageTemplates')}
+            </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
       )}
+
+      <TemplateManagerDialog
+        open={templateManagerOpen}
+        onOpenChange={setTemplateManagerOpen}
+        templates={availableTemplates}
+        selectedTemplate={selectedTemplate}
+        onTemplateSelect={onTemplateSelect}
+        onTemplatesChanged={onTemplatesChanged}
+      />
     </ButtonGroup>
   );
 }

@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
-import { Info } from 'lucide-react';
+import { Check, Info, Mic, Sparkles } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { Switch } from '@/components/ui/switch';
 import { OnboardingContainer } from '../OnboardingContainer';
 import { useOnboarding } from '@/contexts/OnboardingContext';
 import {
@@ -8,10 +9,25 @@ import {
   TooltipContent,
   TooltipProvider,
   TooltipTrigger,
-} from "@/components/ui/tooltip";
+} from '@/components/ui/tooltip';
+import { getSummaryModelSizeLabel } from '@/lib/onboarding-summary-model';
+import { useAppLanguage } from '@/contexts/AppLanguageContext';
+
+const PARAKEET_MODEL = 'parakeet-tdt-0.6b-v3-int8';
 
 export function SetupOverviewStep() {
-  const { goNext } = useOnboarding();
+  const {
+    goNext,
+    parakeetDownloaded,
+    summaryModelDownloaded,
+    selectedSummaryModel,
+    recommendedSummaryModel,
+    downloadTranscriptionDuringSetup,
+    downloadSummaryDuringSetup,
+    setDownloadTranscriptionDuringSetup,
+    setDownloadSummaryDuringSetup,
+  } = useOnboarding();
+  const { t } = useAppLanguage();
   const [isMac, setIsMac] = useState(false);
 
   useEffect(() => {
@@ -19,82 +35,113 @@ export function SetupOverviewStep() {
       try {
         const { platform } = await import('@tauri-apps/plugin-os');
         setIsMac(platform() === 'macos');
-      } catch (e) {
+      } catch {
         setIsMac(navigator.userAgent.includes('Mac'));
       }
     };
-    checkPlatform();
+    void checkPlatform();
   }, []);
 
-  const steps = [
+  const summaryModel = selectedSummaryModel || recommendedSummaryModel;
+  const modelRows = [
     {
-      number: 1,
-      type: 'transcription',
-      title: 'Download Transcription Engine',
+      key: 'transcription',
+      icon: Mic,
+      title: t('transcriptionEngine'),
+      model: `Parakeet · ${PARAKEET_MODEL}`,
+      size: '~670 MB',
+      downloaded: parakeetDownloaded,
+      enabled: downloadTranscriptionDuringSetup,
+      setEnabled: setDownloadTranscriptionDuringSetup,
     },
     {
-      number: 2,
-      type: 'summarization',
-      title: 'Download Summarization Engine',
+      key: 'summary',
+      icon: Sparkles,
+      title: t('summaryEngine'),
+      model: summaryModel || t('detectingRecommendedModel'),
+      size: summaryModel ? getSummaryModelSizeLabel(summaryModel) : '—',
+      downloaded: summaryModelDownloaded,
+      enabled: downloadSummaryDuringSetup,
+      setEnabled: setDownloadSummaryDuringSetup,
     },
   ];
 
-  const handleContinue = () => {
-    goNext();
-  };
-
   return (
     <OnboardingContainer
-      title="Setup Overview"
-      description="Meetily requires that you download the Transcription & Summarization AI models for the software to work."
+      title={t('chooseSetupModels')}
+      description={t('chooseSetupModelsDescription')}
       step={2}
       totalSteps={isMac ? 4 : 3}
     >
-      <div className="flex flex-col items-center space-y-10">
-        {/* Steps Card */}
-        <div className="w-full max-w-md bg-white rounded-lg border border-gray-200 p-4">
-          <div className="space-y-4">
-            {steps.map((step, idx) => {
-              return (
-                <div
-                  key={step.number}
-                  className={`flex items-start gap-4 p-1`}
-                >
-                  <div className="flex-1 ml-1">
-                    <h3 className="font-medium text-gray-900 flex items-center gap-2">
-                        Step {step.number} :  {step.title}
-
-                        {step.type === "summarization" && (
-                            <TooltipProvider>
-                            <Tooltip>
-                                <TooltipTrigger asChild>
-                                <button className="text-gray-400 hover:text-gray-600">
-                                    <Info className="w-4 h-4" />
-                                </button>
-                                </TooltipTrigger>
-                                <TooltipContent className="max-w-xs text-sm">
-                                You can also select external AI providers like OpenAI, Claude, or
-                                Ollama for summary generation in settings.
-                                </TooltipContent>
-                            </Tooltip>
-                            </TooltipProvider>
-                        )}
-                        </h3>
-                  </div>
+      <div className="mx-auto flex w-full max-w-lg flex-col gap-6">
+        <div className="overflow-hidden rounded-xl border border-gray-200 bg-white">
+          {modelRows.map((row, index) => {
+            const Icon = row.icon;
+            return (
+              <div
+                key={row.key}
+                className={`flex items-center gap-4 p-5 ${index > 0 ? 'border-t border-gray-200' : ''}`}
+              >
+                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-gray-100">
+                  <Icon className="h-5 w-5 text-gray-600" aria-hidden="true" />
                 </div>
-              );
-            })}
-          </div>
+                <div className="min-w-0 flex-1">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <h3 className="font-medium text-gray-900">{row.title}</h3>
+                    {row.key === 'summary' && (
+                      <TooltipProvider>
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <button
+                              type="button"
+                              className="text-gray-400 transition-colors hover:text-gray-600"
+                              aria-label={t('summaryModelHelp')}
+                            >
+                              <Info className="h-4 w-4" />
+                            </button>
+                          </TooltipTrigger>
+                          <TooltipContent className="max-w-xs text-sm">
+                            {t('externalSummaryProviders')}
+                          </TooltipContent>
+                        </Tooltip>
+                      </TooltipProvider>
+                    )}
+                  </div>
+                  <p className="mt-1 break-words text-sm text-gray-600">{row.model}</p>
+                  <p className="mt-0.5 text-xs text-gray-500">{row.size}</p>
+                </div>
+                {row.downloaded ? (
+                  <span className="flex shrink-0 items-center gap-1.5 text-sm font-medium text-emerald-700">
+                    <Check className="h-4 w-4" aria-hidden="true" />
+                    {t('downloaded')}
+                  </span>
+                ) : (
+                  <div className="flex shrink-0 flex-col items-end gap-1.5">
+                    <Switch
+                      checked={row.enabled}
+                      onCheckedChange={row.setEnabled}
+                      aria-label={`${row.title}：${t('downloadNow')}`}
+                    />
+                    <span className="text-xs text-gray-600">
+                      {row.enabled ? t('downloadNow') : t('setUpLater')}
+                    </span>
+                  </div>
+                )}
+              </div>
+            );
+          })}
         </div>
 
+        <p className="text-center text-sm leading-6 text-gray-600">
+          {t('modelsCanBeManagedLater')}
+        </p>
 
-        {/* CTA Section */}
-        <div className="w-full max-w-xs space-y-4">
+        <div className="mx-auto w-full max-w-xs space-y-4">
           <Button
-            onClick={handleContinue}
-            className="w-full h-11 bg-gray-900 hover:bg-gray-800 text-white"
+            onClick={goNext}
+            className="h-11 w-full bg-gray-900 text-white hover:bg-gray-800"
           >
-            Let's Go
+            {t('continue')}
           </Button>
           <div className="text-center">
             <a
@@ -103,7 +150,7 @@ export function SetupOverviewStep() {
               rel="noopener noreferrer"
               className="text-xs text-gray-600 hover:underline"
             >
-              Report issues on GitHub
+              {t('reportIssues')}
             </a>
           </div>
         </div>

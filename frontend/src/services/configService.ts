@@ -23,8 +23,9 @@ export interface ModelConfig {
   customOpenAIModel?: string | null;
   customOpenAIApiKey?: string | null;
   maxTokens?: number | null;
-  temperature?: number | null;
-  topP?: number | null;
+  customOpenAIWireApi?: 'responses' | 'chat-completions';
+  reasoningEffort?: 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max';
+  verbosity?: 'low' | 'medium' | 'high';
 }
 
 export interface CustomOpenAIConfig {
@@ -32,8 +33,9 @@ export interface CustomOpenAIConfig {
   apiKey: string | null;
   model: string;
   maxTokens: number | null;
-  temperature: number | null;
-  topP: number | null;
+  wireApi: 'responses' | 'chat-completions';
+  reasoningEffort: 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max';
+  verbosity: 'low' | 'medium' | 'high';
 }
 
 export interface RecordingPreferences {
@@ -48,7 +50,7 @@ export interface RecordingPreferences {
 export class ConfigService {
   /**
    * Get saved transcript model configuration
-   * @returns Promise with { provider, model, apiKey }
+   * @returns Promise with { provider, model, endpoint, apiKey }
    */
   async getTranscriptConfig(): Promise<TranscriptModelProps> {
     return invoke<TranscriptModelProps>('api_get_transcript_config');
@@ -89,8 +91,9 @@ export class ConfigService {
       apiKey: config.apiKey,
       model: config.model,
       maxTokens: config.maxTokens,
-      temperature: config.temperature,
-      topP: config.topP,
+      wireApi: config.wireApi,
+      reasoningEffort: config.reasoningEffort,
+      verbosity: config.verbosity,
     });
   }
 
@@ -104,12 +107,18 @@ export class ConfigService {
   async testCustomOpenAIConnection(
     endpoint: string,
     apiKey: string | null,
-    model: string
+    model: string,
+    wireApi: 'responses' | 'chat-completions',
+    reasoningEffort: CustomOpenAIConfig['reasoningEffort'],
+    verbosity: CustomOpenAIConfig['verbosity'],
   ): Promise<{ status: string; message: string; http_status?: number }> {
     return invoke<{ status: string; message: string; http_status?: number }>('api_test_custom_openai_connection', {
       endpoint,
       apiKey,
       model,
+      wireApi,
+      reasoningEffort,
+      verbosity,
     });
   }
 }

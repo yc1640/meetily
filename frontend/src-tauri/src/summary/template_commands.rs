@@ -2,11 +2,13 @@ use crate::summary::templates;
 use serde::{Deserialize, Serialize};
 use tauri::Runtime;
 use tracing::{info, warn};
+use uuid::Uuid;
 
 /// Template metadata for UI display
 #[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct TemplateInfo {
-    /// Template identifier (e.g., "daily_standup", "standard_meeting")
+    /// Template identifier (e.g., "standard_meeting", "content_summary")
     pub id: String,
 
     /// Display name for the template
@@ -14,6 +16,12 @@ pub struct TemplateInfo {
 
     /// Brief description of the template's purpose
     pub description: String,
+
+    /// Whether Meetily ships a default version of this template
+    pub is_builtin: bool,
+
+    /// Whether a user-owned file currently provides this template
+    pub is_customized: bool,
 }
 
 /// Detailed template structure for preview/debugging
@@ -30,6 +38,26 @@ pub struct TemplateDetails {
 
     /// List of section titles in order
     pub sections: Vec<String>,
+}
+
+/// Full editable template data and its origin.
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EditableTemplateDetails {
+    pub id: String,
+    pub template: templates::Template,
+    pub is_builtin: bool,
+    pub is_customized: bool,
+}
+
+fn template_info(id: String, name: String, description: String) -> TemplateInfo {
+    TemplateInfo {
+        is_builtin: templates::is_default_template(&id),
+        is_customized: templates::is_custom_template(&id),
+        id,
+        name,
+        description,
+    }
 }
 
 /// Lists all available templates
@@ -49,11 +77,7 @@ pub async fn api_list_templates<R: Runtime>(
 
     let template_infos: Vec<TemplateInfo> = templates
         .into_iter()
-        .map(|(id, name, description)| TemplateInfo {
-            id,
-            name,
-            description,
-        })
+        .map(|(id, name, description)| template_info(id, name, description))
         .collect();
 
     info!("Found {} available templates", template_infos.len());
@@ -61,10 +85,58 @@ pub async fn api_list_templates<R: Runtime>(
     Ok(template_infos)
 }
 
+/// Returns the complete template definition used by the summary engine.
+#[tauri::command]
+pub async fn api_get_template_for_editing<R: Runtime>(
+    _app: tauri::AppHandle<R>,
+    template_id: String,
+) -> Result<EditableTemplateDetails, String> {
+    info!(
+        "api_get_template_for_editing called for template_id: {}",
+        template_id
+    );
+
+    let template = templates::get_template(&template_id)?;
+    Ok(EditableTemplateDetails {
+        is_builtin: templates::is_default_template(&template_id),
+        is_customized: templates::is_custom_template(&template_id),
+        id: template_id,
+        template,
+    })
+}
+
+/// Creates a custom template or saves an override for an existing built-in template.
+#[tauri::command]
+pub async fn api_save_template<R: Runtime>(
+    _app: tauri::AppHandle<R>,
+    template_id: Option<String>,
+    template: templates::Template,
+) -> Result<TemplateInfo, String> {
+    let id = template_id.unwrap_or_else(|| format!("custom_{}", Uuid::new_v4().simple()));
+    info!("api_save_template called for template_id: {}", id);
+
+    templates::save_custom_template(&id, &template)?;
+    let saved = templates::get_template(&id)?;
+    Ok(template_info(id, saved.name, saved.description))
+}
+
+/// Deletes a custom template. For a built-in override, this restores the shipped version.
+#[tauri::command]
+pub async fn api_delete_custom_template<R: Runtime>(
+    _app: tauri::AppHandle<R>,
+    template_id: String,
+) -> Result<(), String> {
+    info!(
+        "api_delete_custom_template called for template_id: {}",
+        template_id
+    );
+    templates::delete_custom_template(&template_id)
+}
+
 /// Gets detailed information about a specific template
 ///
 /// # Arguments
-/// * `template_id` - Template identifier (e.g., "daily_standup")
+/// * `template_id` - Template identifier (e.g., "standard_meeting")
 ///
 /// # Returns
 /// TemplateDetails with full template structure
@@ -73,7 +145,10 @@ pub async fn api_get_template_details<R: Runtime>(
     _app: tauri::AppHandle<R>,
     template_id: String,
 ) -> Result<TemplateDetails, String> {
-    info!("api_get_template_details called for template_id: {}", template_id);
+    info!(
+        "api_get_template_details called for template_id: {}",
+        template_id
+    );
 
     let template = templates::get_template(&template_id)?;
 

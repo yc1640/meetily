@@ -1,8 +1,9 @@
-import React, { useState, useEffect } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { Globe } from 'lucide-react';
 import Analytics from '@/lib/analytics';
 import { toast } from 'sonner';
-import { useConfig } from '@/contexts/ConfigContext';
+import type { TranscriptProvider } from '@/components/TranscriptSettings';
+import { useAppLanguage } from '@/contexts/AppLanguageContext';
 
 export interface Language {
   code: string;
@@ -15,6 +16,7 @@ const LANGUAGES: Language[] = [
   { code: 'auto-translate', name: 'Auto Detect (Translate to English)' },
   { code: 'en', name: 'English' },
   { code: 'zh', name: 'Chinese' },
+  { code: 'yue', name: 'Cantonese' },
   { code: 'de', name: 'German' },
   { code: 'es', name: 'Spanish' },
   { code: 'ru', name: 'Russian' },
@@ -118,7 +120,7 @@ interface LanguageSelectionProps {
   selectedLanguage: string;
   onLanguageChange: (language: string) => void;
   disabled?: boolean;
-  provider?: 'localWhisper' | 'parakeet' | 'deepgram' | 'elevenLabs' | 'groq' | 'openai';
+  provider?: TranscriptProvider;
 }
 
 export function LanguageSelection({
@@ -127,20 +129,43 @@ export function LanguageSelection({
   disabled = false,
   provider = 'localWhisper'
 }: LanguageSelectionProps) {
+  const { appLanguage, t } = useAppLanguage();
   const [saving, setSaving] = useState(false);
-  const { setSelectedLanguage } = useConfig();
 
   // Parakeet only supports auto-detection (doesn't support manual language selection)
   const isParakeet = provider === 'parakeet';
-  const availableLanguages = isParakeet
+  const isFunAsrLocal = provider === 'funasrLocal';
+  const isQwen3Asr = provider === 'qwen3Asr';
+  const isOpenAiCompatible = provider === 'qwen3Asr' || provider === 'funasr';
+  const keepsOriginalLanguageOnly = isFunAsrLocal || isOpenAiCompatible;
+  const qwen3AsrLanguages = new Set(['auto', 'zh', 'yue', 'en', 'de', 'es', 'fr', 'it', 'pt', 'ru', 'ko', 'ja']);
+  const availableLanguages = isFunAsrLocal
+    ? LANGUAGES.filter(lang => lang.code === 'auto')
+    : isParakeet
     ? LANGUAGES.filter(lang => lang.code === 'auto' || lang.code === 'auto-translate')
-    : LANGUAGES;
+    : isQwen3Asr
+      ? LANGUAGES.filter(lang => qwen3AsrLanguages.has(lang.code))
+    : isOpenAiCompatible
+      ? LANGUAGES.filter(lang => lang.code !== 'auto-translate')
+      : LANGUAGES;
+
+  const displayNames = useMemo(
+    () => new Intl.DisplayNames([appLanguage], { type: 'language' }),
+    [appLanguage],
+  );
+  const getLanguageName = (language: Language) =>
+    displayNames.of(language.code) || language.name;
+
+  useEffect(() => {
+    if (keepsOriginalLanguageOnly && selectedLanguage === 'auto-translate') {
+      onLanguageChange('auto');
+    }
+  }, [keepsOriginalLanguageOnly, onLanguageChange, selectedLanguage]);
 
   const handleLanguageChange = async (languageCode: string) => {
     setSaving(true);
     try {
       // Save language preference to localStorage and sync to backend
-      setSelectedLanguage(languageCode);
       onLanguageChange(languageCode);
       console.log('Language preference saved:', languageCode);
 
@@ -154,13 +179,13 @@ export function LanguageSelection({
       });
 
       // Show success toast
-      const languageName = selectedLang?.name || languageCode;
-      toast.success("Language preference saved", {
-        description: `Transcription language set to ${languageName}`
+      const languageName = selectedLang ? getLanguageName(selectedLang) : languageCode;
+      toast.success(t('languageSaved'), {
+        description: `${t('languageSetTo')} ${languageName}`
       });
     } catch (error) {
       console.error('Failed to save language preference:', error);
-      toast.error("Failed to save language preference", {
+      toast.error(t('languageSaveFailed'), {
         description: error instanceof Error ? error.message : String(error)
       });
     } finally {
@@ -169,65 +194,77 @@ export function LanguageSelection({
   };
 
   // Find the selected language name for display
-  const selectedLanguageName = LANGUAGES.find(
-    lang => lang.code === selectedLanguage
-  )?.name || 'Auto Detect (Original Language)';
+  const selectedLanguageName = selectedLanguage === 'auto'
+    ? t('autoDetectOriginal')
+    : selectedLanguage === 'auto-translate'
+      ? t('autoTranslateEnglish')
+      : (() => {
+          const language = LANGUAGES.find(lang => lang.code === selectedLanguage);
+          return language ? getLanguageName(language) : t('autoDetectOriginal');
+        })();
 
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
           <Globe className="h-4 w-4 text-gray-600" />
-          <h4 className="text-sm font-medium text-gray-900">Transcription Language</h4>
+          <h4 className="text-sm font-medium text-gray-900">{t('transcriptionLanguage')}</h4>
         </div>
       </div>
 
       <div className="space-y-2">
-        <select
-          value={selectedLanguage}
-          onChange={(e) => handleLanguageChange(e.target.value)}
-          disabled={disabled || saving}
-          className="w-full px-3 py-2 text-sm bg-white border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500 disabled:bg-gray-50 disabled:text-gray-500"
-        >
-          {availableLanguages.map((language) => (
-            <option key={language.code} value={language.code}>
-              {language.name}
-              {language.code !== 'auto' && language.code !== 'auto-translate' && ` (${language.code})`}
-            </option>
-          ))}
-        </select>
-
-        {/* Parakeet language limitation warning */}
-        {isParakeet && (
+        {isFunAsrLocal ? (
           <div className="p-2 bg-amber-50 border border-amber-200 rounded text-amber-800">
-            <p className="font-medium">ℹ️ Parakeet Language Support</p>
-            <p className="mt-1 text-xs">Parakeet currently only supports automatic language detection. Manual language selection is not available. Use Whisper if you need to specify a particular language.</p>
+            <p className="font-medium">{t('funasrLocalLanguageSupport')}</p>
+            <p className="mt-1 text-xs">{t('funasrLocalLanguageDescription')}</p>
           </div>
-        )}
+        ) : (
+          <>
+            <select
+              value={selectedLanguage}
+              onChange={(e) => handleLanguageChange(e.target.value)}
+              disabled={disabled || saving}
+              className="w-full px-3 py-2 text-sm bg-white border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500 disabled:bg-gray-50 disabled:text-gray-500"
+            >
+              {availableLanguages.map((language) => (
+                <option key={language.code} value={language.code}>
+                  {language.code === 'auto' ? t('autoDetectOriginal') : language.code === 'auto-translate' ? t('autoTranslateEnglish') : getLanguageName(language)}
+                  {language.code !== 'auto' && language.code !== 'auto-translate' && ` (${language.code})`}
+                </option>
+              ))}
+            </select>
 
-        {/* Info text */}
-        <div className="text-xs space-y-2 pt-2">
-          <p className="text-gray-600">
-            <strong>Current:</strong> {selectedLanguageName}
-          </p>
-          {selectedLanguage === 'auto' && (
-            <div className="p-2 bg-yellow-50 border border-yellow-200 rounded text-yellow-800">
-              <p className="font-medium">⚠️ Auto Detect may produce incorrect results</p>
-              <p className="mt-1">For best accuracy, select your specific language (e.g., English, Spanish, etc.)</p>
+            {isParakeet && (
+              <div className="p-2 bg-amber-50 border border-amber-200 rounded text-amber-800">
+                <p className="font-medium">{t('parakeetLanguageSupport')}</p>
+                <p className="mt-1 text-xs">{t('parakeetLanguageDescription')}</p>
+              </div>
+            )}
+
+            <div className="text-xs space-y-2 pt-2">
+              <p className="text-gray-600">
+                <strong>{t('current')}:</strong> {selectedLanguageName}
+              </p>
+              {selectedLanguage === 'auto' && (
+                <div className="p-2 bg-yellow-50 border border-yellow-200 rounded text-yellow-800">
+                  <p className="font-medium">{t('autoDetectWarning')}</p>
+                  <p className="mt-1">{t('autoDetectDescription')}</p>
+                </div>
+              )}
+              {selectedLanguage === 'auto-translate' && (
+                <div className="p-2 bg-blue-50 border border-blue-200 rounded text-blue-800">
+                  <p className="font-medium">{t('translationModeActive')}</p>
+                  <p className="mt-1">{t('translationModeDescription')}</p>
+                </div>
+              )}
+              {selectedLanguage !== 'auto' && selectedLanguage !== 'auto-translate' && (
+                <p className="text-gray-600">
+                  {t('transcriptionOptimizedFor')} <strong>{selectedLanguageName}</strong>
+                </p>
+              )}
             </div>
-          )}
-          {selectedLanguage === 'auto-translate' && (
-            <div className="p-2 bg-blue-50 border border-blue-200 rounded text-blue-800">
-              <p className="font-medium">🌐 Translation Mode Active</p>
-              <p className="mt-1">All audio will be automatically translated to English. Best for multilingual meetings where you need English output.</p>
-            </div>
-          )}
-          {selectedLanguage !== 'auto' && selectedLanguage !== 'auto-translate' && (
-            <p className="text-gray-600">
-              Transcription will be optimized for <strong>{selectedLanguageName}</strong>
-            </p>
-          )}
-        </div>
+          </>
+        )}
       </div>
     </div>
   );

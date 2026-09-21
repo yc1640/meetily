@@ -8,6 +8,7 @@ export interface ParakeetModelInfo {
   status: ModelStatus;
   description?: string;
   quantization: QuantizationType;
+  is_external?: boolean;
 }
 
 export type QuantizationType = 'FP32' | 'Int8';
@@ -39,20 +40,20 @@ export interface ModelDisplayInfo {
 
 export const MODEL_DISPLAY_CONFIG: Record<string, ModelDisplayInfo> = {
   'parakeet-tdt-0.6b-v3-int8': {
-    friendlyName: 'Lightning',
+    friendlyName: 'Parakeet v3 Int8',
     icon: '⚡',
     tagline: 'Real time • Best for speed, great accuracy',
     recommended: true,
     tier: 'fastest'
   },
   'parakeet-tdt-0.6b-v2-int8': {
-    friendlyName: 'Compact',
+    friendlyName: 'Parakeet v2 Int8',
     icon: '📦',
     tagline: 'Real time • Smaller size',
     tier: 'balanced'
   },
   'parakeet-tdt-0.6b-v3-fp32': {
-    friendlyName: 'Precise',
+    friendlyName: 'Parakeet v3 FP32',
     icon: '🎯',
     tagline: '20x real-time • Higher accuracy',
     tier: 'precise'
@@ -178,6 +179,10 @@ export class ParakeetAPI {
 
   static async getModelsDirectory(): Promise<string> {
     return await invoke('parakeet_get_models_directory');
+  }
+
+  static async addExistingModel(): Promise<string | null> {
+    return await invoke('parakeet_add_existing_model');
   }
 
   static async downloadModel(modelName: string): Promise<void> {

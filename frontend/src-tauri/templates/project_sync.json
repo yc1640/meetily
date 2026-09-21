@@ -1,51 +1,42 @@
 {
-  "name": "Project Sync / Status Update",
-  "description": "Weekly or bi-weekly project status meeting focusing on milestones and risks.",
+  "name": "Project Progress",
+  "description": "Track progress, milestones, decisions, risks, dependencies, and next steps for a project.",
+  "prompt": "Create a project status record that helps the team understand what changed, what is on track or at risk, and what must happen next. Group updates by workstream or deliverable rather than by speaker. Distinguish completed work, work in progress, proposals, and confirmed scope or schedule changes. Preserve metrics, milestones, dependencies, decision rationale, owners, due dates, and explicit status signals according to the selected detail level. Never infer progress, priority, ownership, dates, or project health that the transcript does not state.",
   "sections": [
     {
-      "title": "Meeting Date & Time",
-      "instruction": "Date, start/end time, facilitator name",
-      "format": "string"
-    },
-    {
-      "title": "Attendees",
-      "instruction": "List attendees and their roles",
-      "format": "list"
-    },
-    {
-      "title": "Milestones & Status",
-      "instruction": "Current milestones with status and estimated completion date",
-      "format": "list",
-      "item_format": "| **Milestone** | **Status** | **ETA** |\n| --- | --- | --- |"
-    },
-    {
-      "title": "Progress Summary",
-      "instruction": "Short paragraph summarizing progress since last sync meeting",
+      "title": "Overall Status",
+      "instruction": "Summarize the project's current state, the most important change since the previous update, and the immediate focus. State whether health or schedule was explicitly characterized; otherwise do not assign a status",
       "format": "paragraph"
     },
     {
-      "title": "Top Risks & Mitigations",
-      "instruction": "List top risks with impact level, mitigation plan, and owner",
+      "title": "Progress & Milestones",
+      "instruction": "Record meaningful progress, completed work, current work, milestone movement, and measurable results by workstream. Keep unstated status, owner, or ETA visibly unknown rather than guessing",
       "format": "list",
-      "item_format": "| **Risk** | **Impact** | **Mitigation** | **Owner** |\n| --- | --- | --- | --- |"
+      "item_format": "| Workstream / Milestone | Progress or Change | Status | Owner | ETA |\n| --- | --- | --- | --- | --- |"
     },
     {
-      "title": "Key Decisions",
-      "instruction": "Decisions made in this meeting with rationale and timestamp",
+      "title": "Risks, Blockers & Dependencies",
+      "instruction": "Capture risks, active blockers, and cross-team or external dependencies. Preserve stated impact, mitigation, dependency direction, owner, and escalation need",
       "format": "list",
-      "item_format": "| **Decision** | **Rationale** | **Timestamp** |\n| --- | --- | --- |"
+      "item_format": "| Type | Item | Impact | Owner | Mitigation / Needed From |\n| --- | --- | --- | --- | --- |"
     },
     {
-      "title": "Action Items",
-      "instruction": "Tasks with owners, due dates, priority, and status",
+      "title": "Decisions & Changes",
+      "instruction": "Record confirmed decisions and scope, priority, ownership, or schedule changes. Distinguish them from proposals and include rationale, conditions, and timestamp when stated",
       "format": "list",
-      "item_format": "| **Owner** | **Task** | **Due Date** | **Priority** | **Status** |\n| --- | --- | --- | --- | --- |"
+      "item_format": "| Decision / Change | Rationale / Conditions | Owner | Reference |\n| --- | --- | --- | --- |"
     },
     {
-      "title": "Related Documents",
-      "instruction": "Links to relevant documents, tickets, or designs discussed",
+      "title": "Next Steps",
+      "instruction": "Capture explicit tasks and follow-up commitments with owners, dates, dependencies, and completion signals when stated",
       "format": "list",
-      "item_format": "| **Document Title** | **URL** | **Type** |\n| --- | --- | --- |"
+      "item_format": "| Action | Owner | Due | Dependency / Completion Signal |\n| --- | --- | --- | --- |"
+    },
+    {
+      "title": "Open Questions",
+      "instruction": "List unresolved questions, pending decisions, and missing information, including who needs to answer or what evidence is required",
+      "format": "list",
+      "item_format": "| Question | Needed From | Next Step / Decision Point |\n| --- | --- | --- |"
     }
   ]
 }

@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { Info } from 'lucide-react';
+import { useAppLanguage } from '@/contexts/AppLanguageContext';
 
 export interface BackendInfo {
   id: string;
@@ -19,11 +20,17 @@ export function AudioBackendSelector({
   onBackendChange,
   disabled = false,
 }: AudioBackendSelectorProps) {
+  const { t } = useAppLanguage();
   const [backends, setBackends] = useState<BackendInfo[]>([]);
   const [currentBackend, setCurrentBackend] = useState<string>('coreaudio');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [showTooltip, setShowTooltip] = useState(false);
+  const getBackendDescription = (backend: BackendInfo) => {
+    if (backend.id === 'screencapturekit') return t('screenCaptureKitDescription');
+    if (backend.id === 'coreaudio') return t('coreAudioDescription');
+    return backend.description;
+  };
 
   // Load available backends and current selection
   useEffect(() => {
@@ -45,14 +52,14 @@ export function AudioBackendSelector({
         }
       } catch (err) {
         console.error('Failed to load audio backends:', err);
-        setError('Failed to load backend options');
+        setError(t('backendLoadFailed'));
       } finally {
         setLoading(false);
       }
     };
 
     loadBackends();
-  }, [propBackend]);
+  }, [propBackend, t]);
 
   // Handle backend selection
   const handleBackendChange = async (backendId: string) => {
@@ -69,7 +76,7 @@ export function AudioBackendSelector({
       console.log(`Audio backend changed to: ${backendId}`);
     } catch (err) {
       console.error('Failed to set audio backend:', err);
-      setError('Failed to change backend. Please try again.');
+      setError(t('backendChangeFailed'));
     }
   };
 
@@ -92,7 +99,7 @@ export function AudioBackendSelector({
     <div className="space-y-2">
       <div className="flex items-center gap-2">
         <label className="text-sm font-medium text-gray-700">
-          System Audio Backend
+          {t('systemAudioBackend')}
         </label>
         <div className="relative">
           <button
@@ -105,16 +112,16 @@ export function AudioBackendSelector({
           </button>
           {showTooltip && (
             <div className="absolute z-10 left-6 top-0 w-64 p-3 text-xs bg-gray-900 text-white rounded-lg shadow-lg">
-              <p className="font-semibold mb-1">Audio Capture Methods:</p>
+              <p className="font-semibold mb-1">{t('audioCaptureMethods')}:</p>
               <ul className="space-y-1">
                 {backends.map((backend) => (
                   <li key={backend.id}>
-                    <span className="font-medium">{backend.name}:</span> {backend.description}
+                    <span className="font-medium">{backend.name}:</span> {getBackendDescription(backend)}
                   </li>
                 ))}
               </ul>
               <p className="mt-2 text-gray-300">
-                Try different backends to find which works best for your system.
+                {t('backendSelectionTip')}
               </p>
             </div>
           )}
@@ -158,16 +165,16 @@ export function AudioBackendSelector({
                   </span>
                   {currentBackend === backend.id && (
                     <span className="text-xs font-medium text-blue-600 bg-blue-100 px-2 py-0.5 rounded">
-                      Active
+                      {t('active')}
                     </span>
                   )}
                   {isCoreAudio && (
                     <span className="text-xs font-medium text-gray-500 bg-gray-100 px-2 py-0.5 rounded">
-                      Disabled
+                      {t('disabled')}
                     </span>
                   )}
                 </div>
-                <p className="mt-1 text-xs text-gray-600">{backend.description}</p>
+                <p className="mt-1 text-xs text-gray-600">{getBackendDescription(backend)}</p>
               </div>
             </label>
           );
@@ -175,9 +182,9 @@ export function AudioBackendSelector({
       </div>
 
       <div className="text-xs text-gray-500 space-y-1">
-        <p>• Backend selection only affects system audio capture</p>
-        <p>• Microphone always uses the default method</p>
-        <p>• Changes apply to new recording sessions</p>
+        <p>• {t('backendSystemOnly')}</p>
+        <p>• {t('microphoneUsesDefaultBackend')}</p>
+        <p>• {t('backendAppliesNextRecording')}</p>
       </div>
     </div>
   );

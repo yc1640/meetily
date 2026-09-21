@@ -15,6 +15,8 @@ use crate::audio::capture::AudioCaptureBackend;
 pub struct RecordingPreferences {
     pub save_folder: PathBuf,
     pub auto_save: bool,
+    #[serde(default = "default_transcription_enabled")]
+    pub transcription_enabled: bool,
     pub file_format: String,
     #[serde(default)]
     pub preferred_mic_device: Option<String>,
@@ -30,6 +32,7 @@ impl Default for RecordingPreferences {
         Self {
             save_folder: get_default_recordings_folder(),
             auto_save: true,
+            transcription_enabled: true,
             file_format: "mp4".to_string(),
             preferred_mic_device: None,
             preferred_system_device: None,
@@ -37,6 +40,22 @@ impl Default for RecordingPreferences {
             system_audio_backend: Some("coreaudio".to_string()),
         }
     }
+}
+
+fn default_transcription_enabled() -> bool {
+    true
+}
+
+pub fn validate_recording_mode(
+    auto_save: bool,
+    transcription_enabled: bool,
+) -> Result<(), &'static str> {
+    if !auto_save && !transcription_enabled {
+        return Err(
+            "Audio saving and live transcription cannot both be disabled. Enable at least one recording output.",
+        );
+    }
+    Ok(())
 }
 
 /// Get the default recordings folder based on platform
@@ -110,6 +129,12 @@ pub async fn load_recording_preferences<R: Runtime>(
         match serde_json::from_value::<RecordingPreferences>(value.clone()) {
             Ok(mut p) => {
                 info!("Loaded recording preferences from store");
+                if validate_recording_mode(p.auto_save, p.transcription_enabled).is_err() {
+                    warn!(
+                        "Stored recording preferences disabled every output; restoring audio saving"
+                    );
+                    p.auto_save = true;
+                }
                 // Update macOS backend to current value if needed
                 #[cfg(target_os = "macos")]
                 {
@@ -128,8 +153,8 @@ pub async fn load_recording_preferences<R: Runtime>(
         RecordingPreferences::default()
     };
 
-    info!("Loaded recording preferences: save_folder={:?}, auto_save={}, format={}, mic={:?}, system={:?}",
-          prefs.save_folder, prefs.auto_save, prefs.file_format,
+    info!("Loaded recording preferences: save_folder={:?}, auto_save={}, transcription_enabled={}, format={}, mic={:?}, system={:?}",
+          prefs.save_folder, prefs.auto_save, prefs.transcription_enabled, prefs.file_format,
           prefs.preferred_mic_device, prefs.preferred_system_device);
     Ok(prefs)
 }
@@ -139,8 +164,11 @@ pub async fn save_recording_preferences<R: Runtime>(
     app: &AppHandle<R>,
     preferences: &RecordingPreferences,
 ) -> Result<()> {
-    info!("Saving recording preferences: save_folder={:?}, auto_save={}, format={}, mic={:?}, system={:?}",
-          preferences.save_folder, preferences.auto_save, preferences.file_format,
+    validate_recording_mode(preferences.auto_save, preferences.transcription_enabled)
+        .map_err(anyhow::Error::msg)?;
+
+    info!("Saving recording preferences: save_folder={:?}, auto_save={}, transcription_enabled={}, format={}, mic={:?}, system={:?}",
+          preferences.save_folder, preferences.auto_save, preferences.transcription_enabled, preferences.file_format,
           preferences.preferred_mic_device, preferences.preferred_system_device);
 
     // Get or create store
@@ -384,4 +412,3 @@ pub async fn get_audio_backend_info() -> Result<Vec<BackendInfo>, String> {
         }])
     }
 }
-

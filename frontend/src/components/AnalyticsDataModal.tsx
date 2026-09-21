@@ -2,6 +2,7 @@
 
 import React from 'react';
 import { X, Info, Shield } from 'lucide-react';
+import { useAppLanguage } from '@/contexts/AppLanguageContext';
 
 interface AnalyticsDataModalProps {
   isOpen: boolean;
@@ -10,6 +11,7 @@ interface AnalyticsDataModalProps {
 }
 
 export default function AnalyticsDataModal({ isOpen, onClose, onConfirmDisable }: AnalyticsDataModalProps) {
+  const { t } = useAppLanguage();
   if (!isOpen) return null;
 
   return (
@@ -19,11 +21,12 @@ export default function AnalyticsDataModal({ isOpen, onClose, onConfirmDisable }
         <div className="flex items-center justify-between p-6 border-b border-gray-200">
           <div className="flex items-center gap-3">
             <Shield className="w-6 h-6 text-blue-600" />
-            <h2 className="text-xl font-semibold text-gray-900">What Analytics Collects</h2>
+            <h2 className="text-xl font-semibold text-gray-900">{t('analyticsCollectsTitle')}</h2>
           </div>
           <button
             onClick={onClose}
             className="text-gray-400 hover:text-gray-600 transition-colors"
+            aria-label={t('close')}
           >
             <X className="w-5 h-5" />
           </button>
@@ -36,90 +39,90 @@ export default function AnalyticsDataModal({ isOpen, onClose, onConfirmDisable }
             <div className="flex items-start gap-3">
               <Info className="w-5 h-5 text-green-600 mt-0.5 flex-shrink-0" />
               <div className="text-sm text-green-800">
-                <p className="font-semibold mb-1">Your Privacy is Protected</p>
-                <p>Analytics is off by default. If you enable it, we collect <strong>anonymous usage data only</strong>. No meeting content, names, file paths, or personal information is ever collected.</p>
+                <p className="font-semibold mb-1">{t('analyticsPrivacyProtected')}</p>
+                <p>{t('analyticsPrivacyDescription')}</p>
               </div>
             </div>
           </div>
 
           {/* Data Categories */}
           <div className="space-y-4">
-            <h3 className="text-lg font-semibold text-gray-900">Data We Collect When Enabled:</h3>
+            <h3 className="text-lg font-semibold text-gray-900">{t('analyticsDataCollectedWhenEnabled')}</h3>
 
             {/* Model Preferences */}
             <div className="border border-gray-200 rounded-lg p-4">
-              <h4 className="font-semibold text-gray-900 mb-2">1. Model Preferences</h4>
+              <h4 className="font-semibold text-gray-900 mb-2">1. {t('analyticsModelPreferences')}</h4>
               <ul className="text-sm text-gray-700 space-y-1 ml-4">
-                <li>• Transcription model (e.g., "Whisper large-v3", "Parakeet")</li>
-                <li>• Summary model (e.g., "Llama 3.2", "Claude Sonnet")</li>
-                <li>• Model provider (e.g., "Local", "Ollama", "OpenRouter")</li>
+                <li>• {t('analyticsTranscriptionModelExample')}</li>
+                <li>• {t('analyticsSummaryModelExample')}</li>
+                <li>• {t('analyticsModelProviderExample')}</li>
               </ul>
-              <p className="text-xs text-gray-500 mt-2 italic">Helps us understand which models users prefer</p>
+              <p className="text-xs text-gray-500 mt-2 italic">{t('analyticsModelPreferencesPurpose')}</p>
             </div>
 
             {/* Meeting Metrics */}
             <div className="border border-gray-200 rounded-lg p-4">
-              <h4 className="font-semibold text-gray-900 mb-2">2. Anonymous Meeting Metrics</h4>
+              <h4 className="font-semibold text-gray-900 mb-2">2. {t('analyticsMeetingMetrics')}</h4>
               <ul className="text-sm text-gray-700 space-y-1 ml-4">
-                <li>• Recording duration (e.g., "125 seconds")</li>
-                <li>• Pause duration (e.g., "5 seconds")</li>
-                <li>• Number of transcript segments</li>
-                <li>• Number of audio chunks processed</li>
+                <li>• {t('analyticsRecordingDurationExample')}</li>
+                <li>• {t('analyticsPauseDurationExample')}</li>
+                <li>• {t('analyticsTranscriptSegmentCount')}</li>
+                <li>• {t('analyticsAudioChunksProcessed')}</li>
               </ul>
-              <p className="text-xs text-gray-500 mt-2 italic">Helps us optimize performance and understand usage patterns</p>
+              <p className="text-xs text-gray-500 mt-2 italic">{t('analyticsMeetingMetricsPurpose')}</p>
             </div>
 
             {/* Device Types */}
             <div className="border border-gray-200 rounded-lg p-4">
-              <h4 className="font-semibold text-gray-900 mb-2">3. Device Types (Not Names)</h4>
+              <h4 className="font-semibold text-gray-900 mb-2">3. {t('analyticsDeviceTypes')}</h4>
               <ul className="text-sm text-gray-700 space-y-1 ml-4">
-                <li>• Microphone type: "Bluetooth" or "Wired" or "Unknown"</li>
-                <li>• System audio type: "Bluetooth" or "Wired" or "Unknown"</li>
+                <li>• {t('analyticsMicrophoneTypeExample')}</li>
+                <li>• {t('analyticsSystemAudioTypeExample')}</li>
               </ul>
-              <p className="text-xs text-gray-500 mt-2 italic">Helps us improve compatibility, NOT the actual device names</p>
+              <p className="text-xs text-gray-500 mt-2 italic">{t('analyticsDeviceTypesPurpose')}</p>
             </div>
 
             {/* Usage Patterns */}
             <div className="border border-gray-200 rounded-lg p-4">
-              <h4 className="font-semibold text-gray-900 mb-2">4. App Usage Patterns</h4>
+              <h4 className="font-semibold text-gray-900 mb-2">4. {t('analyticsUsagePatterns')}</h4>
               <ul className="text-sm text-gray-700 space-y-1 ml-4">
-                <li>• App started/stopped events</li>
-                <li>• Session duration</li>
-                <li>• Feature usage (e.g., "settings changed")</li>
-                <li>• Error occurrences (helps us fix bugs)</li>
+                <li>• {t('analyticsAppLifecycleEvents')}</li>
+                <li>• {t('analyticsSessionDuration')}</li>
+                <li>• {t('analyticsFeatureUsageExample')}</li>
+                <li>• {t('analyticsErrorOccurrences')}</li>
               </ul>
-              <p className="text-xs text-gray-500 mt-2 italic">Helps us improve user experience</p>
+              <p className="text-xs text-gray-500 mt-2 italic">{t('analyticsUsagePatternsPurpose')}</p>
             </div>
 
             {/* Platform Info */}
             <div className="border border-gray-200 rounded-lg p-4">
-              <h4 className="font-semibold text-gray-900 mb-2">5. Platform Information</h4>
+              <h4 className="font-semibold text-gray-900 mb-2">5. {t('analyticsPlatformInfo')}</h4>
               <ul className="text-sm text-gray-700 space-y-1 ml-4">
-                <li>• Operating system (e.g., "macOS", "Windows")</li>
-                <li>• App version (automatically included in all events)</li>
-                <li>• Architecture (e.g., "x86_64", "aarch64")</li>
+                <li>• {t('analyticsOperatingSystemExample')}</li>
+                <li>• {t('analyticsAppVersionIncluded')}</li>
+                <li>• {t('analyticsArchitectureExample')}</li>
               </ul>
-              <p className="text-xs text-gray-500 mt-2 italic">Helps us prioritize platform support</p>
+              <p className="text-xs text-gray-500 mt-2 italic">{t('analyticsPlatformInfoPurpose')}</p>
             </div>
           </div>
 
           {/* What We DON'T Collect */}
           <div className="bg-red-50 border border-red-200 rounded-lg p-4">
-            <h4 className="font-semibold text-red-900 mb-2">What We DON'T Collect:</h4>
+            <h4 className="font-semibold text-red-900 mb-2">{t('analyticsNotCollected')}</h4>
             <ul className="text-sm text-red-800 space-y-1 ml-4">
-              <li>• ❌ Meeting names or titles</li>
-              <li>• ❌ File names, file paths, or meeting folders</li>
-              <li>• ❌ Meeting transcripts or content</li>
-              <li>• ❌ Audio recordings</li>
-              <li>• ❌ Device names (only types: Bluetooth/Wired)</li>
-              <li>• ❌ Personal information</li>
-              <li>• ❌ Any identifiable data</li>
+              <li>• {t('analyticsMeetingNamesNotCollected')}</li>
+              <li>• {t('analyticsFileDetailsNotCollected')}</li>
+              <li>• {t('analyticsMeetingContentNotCollected')}</li>
+              <li>• {t('analyticsRecordingsNotCollected')}</li>
+              <li>• {t('analyticsDeviceNamesNotCollected')}</li>
+              <li>• {t('analyticsPersonalInfoNotCollected')}</li>
+              <li>• {t('analyticsIdentifiableDataNotCollected')}</li>
             </ul>
           </div>
 
           {/* Example Event */}
           <div className="bg-gray-50 border border-gray-200 rounded-lg p-4">
-            <h4 className="font-semibold text-gray-900 mb-2">Example Event:</h4>
+            <h4 className="font-semibold text-gray-900 mb-2">{t('analyticsExampleEvent')}</h4>
             <pre className="text-xs text-gray-700 overflow-x-auto">
               {`{
   "event": "meeting_ended",
@@ -144,13 +147,13 @@ export default function AnalyticsDataModal({ isOpen, onClose, onConfirmDisable }
             onClick={onClose}
             className="px-4 py-2 text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50 transition-colors"
           >
-            Keep Analytics Enabled
+            {t('keepAnalyticsEnabled')}
           </button>
           <button
             onClick={onConfirmDisable}
             className="px-4 py-2 text-white bg-red-600 rounded-md hover:bg-red-700 transition-colors"
           >
-            Confirm: Disable Analytics
+            {t('confirmDisableAnalytics')}
           </button>
         </div>
       </div>

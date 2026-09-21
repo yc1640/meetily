@@ -6,7 +6,10 @@ export interface Message {
 
 export interface Transcript {
   id: string;
+  /** Effective text: polished version when one exists, otherwise the original ASR text. */
   text: string;
+  original_text?: string;
+  polished_text?: string;
   timestamp: string; // Wall-clock time (e.g., "14:30:05")
   sequence_id?: number;
   chunk_start_time?: number; // Legacy field
@@ -65,6 +68,9 @@ export interface SummaryResponse {
   };
 }
 
+/** Controls how much source detail the summary pipeline preserves. */
+export type SummaryDetailLevel = 'concise' | 'standard' | 'detailed';
+
 // BlockNote-specific types
 export type SummaryFormat = 'legacy' | 'markdown' | 'blocknote';
 
@@ -106,5 +112,7 @@ export interface TranscriptSegmentData {
   timestamp: number; // audio_start_time in seconds
   endTime?: number; // audio_end_time in seconds
   text: string;
+  originalText?: string;
+  polishedText?: string;
   confidence?: number;
 }

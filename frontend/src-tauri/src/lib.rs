@@ -36,17 +36,18 @@ pub(crate) use perf_trace;
 
 // Declare audio module
 pub mod analytics;
+pub mod anthropic;
 pub mod api;
 pub mod audio;
 pub mod config;
 pub mod console_utils;
 pub mod database;
+pub mod groq;
+mod model_reference;
 pub mod notifications;
 pub mod ollama;
 pub mod onboarding;
 pub mod openai;
-pub mod anthropic;
-pub mod groq;
 pub mod openrouter;
 pub mod parakeet_engine;
 pub mod state;
@@ -55,7 +56,7 @@ pub mod tray;
 pub mod utils;
 pub mod whisper_engine;
 
-use audio::{list_audio_devices, AudioDevice, trigger_audio_permission};
+use audio::{list_audio_devices, trigger_audio_permission, AudioDevice};
 use log::{error as log_error, info as log_info};
 use notifications::commands::NotificationManagerState;
 use std::sync::Arc;
@@ -64,9 +65,10 @@ use tokio::sync::RwLock;
 
 static RECORDING_FLAG: AtomicBool = AtomicBool::new(false);
 
-// Global language preference storage (default to "auto-translate" for automatic translation to English)
+// Global language preference storage. Keep the original spoken language by default;
+// translation to English is an explicit user choice.
 static LANGUAGE_PREFERENCE: std::sync::LazyLock<StdMutex<String>> =
-    std::sync::LazyLock::new(|| StdMutex::new("auto-translate".to_string()));
+    std::sync::LazyLock::new(|| StdMutex::new("auto".to_string()));
 
 #[derive(Debug, Deserialize)]
 struct RecordingArgs {
@@ -124,10 +126,7 @@ async fn start_recording<R: Runtime>(
             )
             .await
             {
-                log_error!(
-                    "Failed to show recording started notification: {}",
-                    e
-                );
+                log_error!("Failed to show recording started notification: {}", e);
             } else {
                 log_info!("Successfully showed recording started notification");
             }
@@ -136,6 +135,14 @@ async fn start_recording<R: Runtime>(
         }
         Err(e) => {
             log_error!("Failed to start audio recording: {}", e);
+            if let Err(shutdown_error) =
+                audio::transcription::qwen3_asr_local_provider::shutdown_managed_service().await
+            {
+                log_error!(
+                    "Failed to stop MLX-Audio after recording startup failed: {}",
+                    shutdown_error
+                );
+            }
             Err(format!("Failed to start recording: {}", e))
         }
     }
@@ -185,10 +192,7 @@ async fn stop_recording<R: Runtime>(app: AppHandle<R>, args: RecordingArgs) -> R
             )
             .await
             {
-                log_error!(
-                    "Failed to show recording stopped notification: {}",
-                    e
-                );
+                log_error!("Failed to show recording stopped notification: {}", e);
             } else {
                 log_info!("Successfully showed recording stopped notification");
             }
@@ -357,16 +361,21 @@ async fn start_recording_with_devices_and_meeting<R: Runtime>(
             )
             .await
             {
-                log_error!(
-                    "Failed to show recording started notification: {}",
-                    e
-                );
+                log_error!("Failed to show recording started notification: {}", e);
             }
 
             Ok(())
         }
         Err(e) => {
             log_error!("Failed to start recording via tauri command: {}", e);
+            if let Err(shutdown_error) =
+                audio::transcription::qwen3_asr_local_provider::shutdown_managed_service().await
+            {
+                log_error!(
+                    "Failed to stop MLX-Audio after recording startup failed: {}",
+                    shutdown_error
+                );
+            }
             Err(e)
         }
     }
@@ -564,6 +573,7 @@ pub fn run() {
             whisper_engine::commands::whisper_validate_model_ready,
             whisper_engine::commands::whisper_transcribe_audio,
             whisper_engine::commands::whisper_get_models_directory,
+            whisper_engine::commands::whisper_add_existing_model,
             whisper_engine::commands::whisper_download_model,
             whisper_engine::commands::whisper_cancel_download,
             whisper_engine::commands::whisper_delete_corrupted_model,
@@ -577,6 +587,7 @@ pub fn run() {
             parakeet_engine::commands::parakeet_validate_model_ready,
             parakeet_engine::commands::parakeet_transcribe_audio,
             parakeet_engine::commands::parakeet_get_models_directory,
+            parakeet_engine::commands::parakeet_add_existing_model,
             parakeet_engine::commands::parakeet_download_model,
             parakeet_engine::commands::parakeet_retry_download,
             parakeet_engine::commands::parakeet_cancel_download,
@@ -667,9 +678,17 @@ pub fn run() {
             summary::commands::api_save_meeting_detected_summary_language,
             summary::commands::api_detect_transcript_summary_language,
             summary::commands::api_cancel_summary,
+            // AI transcript polishing
+            summary::transcript_polish::api_polish_transcript_preview,
+            summary::transcript_polish::api_cancel_transcript_polish,
+            summary::transcript_polish::api_apply_polished_transcript,
+            summary::transcript_polish::api_clear_polished_transcript,
             // Template commands
             summary::template_commands::api_list_templates,
             summary::template_commands::api_get_template_details,
+            summary::template_commands::api_get_template_for_editing,
+            summary::template_commands::api_save_template,
+            summary::template_commands::api_delete_custom_template,
             summary::template_commands::api_validate_template,
             // Built-in AI commands
             summary::summary_engine::commands::builtin_ai_list_models,
@@ -677,6 +696,7 @@ pub fn run() {
             summary::summary_engine::commands::builtin_ai_download_model,
             summary::summary_engine::commands::builtin_ai_cancel_download,
             summary::summary_engine::commands::builtin_ai_delete_model,
+            summary::summary_engine::commands::builtin_ai_add_existing_model,
             summary::summary_engine::commands::builtin_ai_is_model_ready,
             summary::summary_engine::commands::builtin_ai_get_available_summary_model,
             summary::summary_engine::commands::builtin_ai_get_recommended_model,
@@ -690,6 +710,14 @@ pub fn run() {
             audio::recording_preferences::get_current_audio_backend,
             audio::recording_preferences::set_audio_backend,
             audio::recording_preferences::get_audio_backend_info,
+            // FunASR local model management
+            audio::transcription::funasr_local_provider::funasr_local_get_status,
+            audio::transcription::funasr_local_provider::funasr_local_download_model,
+            audio::transcription::funasr_local_provider::funasr_local_add_existing_model,
+            // Managed Qwen3-ASR / MLX-Audio model and runtime management
+            audio::transcription::qwen3_asr_local_provider::qwen3_asr_get_status,
+            audio::transcription::qwen3_asr_local_provider::qwen3_asr_download_model,
+            audio::transcription::qwen3_asr_local_provider::qwen3_asr_add_existing_model,
             // Language preference commands
             set_language_preference,
             // Notification system commands
@@ -740,6 +768,7 @@ pub fn run() {
             utils::open_system_settings,
             // Retranscription commands
             audio::retranscription::start_retranscription_command,
+            audio::retranscription::retranscribe_segment_command,
             audio::retranscription::cancel_retranscription_command,
             audio::retranscription::is_retranscription_in_progress_command,
             // Import audio commands
@@ -776,6 +805,11 @@ pub fn run() {
                         log::info!("Cleaning up sidecar...");
                         if let Err(e) = summary::summary_engine::force_shutdown_sidecar().await {
                             log::error!("Failed to force shutdown sidecar: {}", e);
+                        }
+
+                        // Stop the app-managed MLX-Audio server and release its model memory.
+                        if let Err(e) = audio::transcription::qwen3_asr_local_provider::shutdown_managed_service().await {
+                            log::error!("Failed to stop managed MLX-Audio service: {}", e);
                         }
                     });
                     log::info!("Application cleanup complete");

@@ -9,6 +9,8 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip";
 import { RecordingStatusBar } from "./RecordingStatusBar";
 import { motion, AnimatePresence } from "framer-motion";
 import { TranscriptSegmentData } from "@/types";
+import { useAppLanguage } from '@/contexts/AppLanguageContext';
+import { RefreshCw } from 'lucide-react';
 
 export interface VirtualizedTranscriptViewProps {
     /** Transcript segments to display */
@@ -25,8 +27,14 @@ export interface VirtualizedTranscriptViewProps {
     enableStreaming?: boolean;
     /** Show confidence indicators */
     showConfidence?: boolean;
+    /** Preserve stored text exactly instead of hiding a small English filler-word list. */
+    preserveText?: boolean;
+    /** Whether the current session creates live text, rather than audio only */
+    isTranscriptionEnabled?: boolean;
     /** Completely disable auto-scroll behavior (for meeting details page) */
     disableAutoScroll?: boolean;
+    /** Optional action for retranscribing one stored, timestamped segment. */
+    onRetranscribeSegment?: (segment: TranscriptSegmentData) => void;
 
     // Pagination props (infinite scroll)
     hasMore?: boolean;
@@ -71,6 +79,9 @@ const TranscriptSegment = memo(function TranscriptSegment({
     confidence,
     isStreaming,
     showConfidence,
+    preserveText,
+    onRetranscribe,
+    retranscribeLabel,
 }: {
     id: string;
     timestamp: number;
@@ -78,8 +89,12 @@ const TranscriptSegment = memo(function TranscriptSegment({
     confidence?: number;
     isStreaming: boolean;
     showConfidence: boolean;
+    preserveText: boolean;
+    onRetranscribe?: () => void;
+    retranscribeLabel: string;
 }) {
-    const displayText = cleanStopWords(text) || (text.trim() === '' ? '[Silence]' : text);
+    const normalizedText = preserveText ? text : cleanStopWords(text);
+    const displayText = normalizedText || (text.trim() === '' ? '[Silence]' : text);
 
     return (
         <div id={`segment-${id}`} className="mb-3">
@@ -101,6 +116,22 @@ const TranscriptSegment = memo(function TranscriptSegment({
                         <div className="bg-gray-100 border border-gray-200 rounded-lg px-3 py-2">
                             <p className="text-base text-gray-800 leading-relaxed">{displayText}</p>
                         </div>
+                    ) : onRetranscribe ? (
+                        <button
+                            type="button"
+                            onClick={onRetranscribe}
+                            className="group/segment -mx-2 flex w-[calc(100%+1rem)] items-start gap-2 rounded-md px-2 py-1 text-left transition-colors hover:bg-gray-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-1"
+                            aria-label={`${retranscribeLabel}: ${displayText}`}
+                            title={retranscribeLabel}
+                        >
+                            <span className="min-w-0 flex-1 break-words text-base leading-relaxed text-gray-800">
+                                {displayText}
+                            </span>
+                            <RefreshCw
+                                className="mt-1 h-4 w-4 shrink-0 text-gray-400 transition-colors group-hover/segment:text-blue-600 group-focus-visible/segment:text-blue-600"
+                                aria-hidden="true"
+                            />
+                        </button>
                     ) : (
                         <p className="text-base text-gray-800 leading-relaxed">{displayText}</p>
                     )}
@@ -118,13 +149,17 @@ export const VirtualizedTranscriptView: React.FC<VirtualizedTranscriptViewProps>
     isStopping = false,
     enableStreaming = false,
     showConfidence = true,
+    preserveText = false,
+    isTranscriptionEnabled = true,
     disableAutoScroll = false,
+    onRetranscribeSegment,
     hasMore = false,
     isLoadingMore = false,
     totalCount = 0,
     loadedCount = 0,
     onLoadMore,
 }) => {
+    const { t } = useAppLanguage();
     // Create scroll ref first - shared between virtualizer and auto-scroll hook
     const scrollRef = useRef<HTMLDivElement>(null);
     // Ref for infinite scroll trigger element
@@ -243,22 +278,29 @@ export const VirtualizedTranscriptView: React.FC<VirtualizedTranscriptViewProps>
                     animate={{ opacity: 1 }}
                     className="text-center text-gray-500 mt-8"
                 >
-                    {isRecording ? (
+                    {isRecording && !isTranscriptionEnabled ? (
+                        <>
+                            <div className="flex items-center justify-center mb-3">
+                                <div className="w-3 h-3 rounded-full bg-red-500 animate-pulse" />
+                            </div>
+                            <p className="text-sm text-gray-600">{t('recordingOnly')}</p>
+                        </>
+                    ) : isRecording ? (
                         <>
                             <div className="flex items-center justify-center mb-3">
                                 <div className={`w-3 h-3 rounded-full ${isPaused ? 'bg-orange-500' : 'bg-blue-500 animate-pulse'}`}></div>
                             </div>
                             <p className="text-sm text-gray-600">
-                                {isPaused ? 'Recording paused' : 'Listening for speech...'}
+                                {isPaused ? t('paused') : t('listeningForSpeech')}
                             </p>
                             <p className="text-xs mt-1 text-gray-400">
-                                {isPaused ? 'Click resume to continue recording' : 'Speak to see live transcription'}
+                                {isPaused ? t('resumeRecording') : t('speakToSeeTranscription')}
                             </p>
                         </>
                     ) : (
                         <>
-                            <p className="text-lg font-semibold">Welcome to meetily!</p>
-                            <p className="text-xs mt-1">Start recording to see live transcription</p>
+                            <p className="text-lg font-semibold">{t('welcome')}</p>
+                            <p className="text-xs mt-1">{t('startToSeeTranscription')}</p>
                         </>
                     )}
                 </motion.div>
@@ -296,6 +338,13 @@ export const VirtualizedTranscriptView: React.FC<VirtualizedTranscriptViewProps>
                                         confidence={segment.confidence}
                                         isStreaming={isStreaming}
                                         showConfidence={showConfidence}
+                                        preserveText={preserveText}
+                                        onRetranscribe={
+                                            onRetranscribeSegment && segment.endTime !== undefined && segment.endTime > segment.timestamp
+                                                ? () => onRetranscribeSegment(segment)
+                                                : undefined
+                                        }
+                                        retranscribeLabel={t('retranscribeThisSegment')}
                                     />
                                 </div>
                             );
@@ -308,11 +357,11 @@ export const VirtualizedTranscriptView: React.FC<VirtualizedTranscriptViewProps>
                             {isLoadingMore ? (
                                 <div className="flex items-center gap-2 text-gray-500">
                                     <div className="w-4 h-4 border-2 border-gray-300 border-t-gray-600 rounded-full animate-spin" />
-                                    <span className="text-sm">Loading more...</span>
+                                    <span className="text-sm">{t('loadingMore')}</span>
                                 </div>
                             ) : hasMore && totalCount > 0 ? (
                                 <span className="text-sm text-gray-400">
-                                    Showing {loadedCount} of {totalCount} segments
+                                    {t('showingSegments')} {loadedCount} {t('of')} {totalCount} {t('segments')}
                                 </span>
                             ) : null}
                         </div>
@@ -327,7 +376,7 @@ export const VirtualizedTranscriptView: React.FC<VirtualizedTranscriptViewProps>
                             className="flex items-center gap-2 mt-4 text-gray-500"
                         >
                             <div className="w-2 h-2 bg-blue-500 rounded-full animate-pulse"></div>
-                            <span className="text-sm">Listening...</span>
+                            <span className="text-sm">{t('listeningForSpeech')}</span>
                         </motion.div>
                     )}
                 </>
@@ -352,6 +401,13 @@ export const VirtualizedTranscriptView: React.FC<VirtualizedTranscriptViewProps>
                                         confidence={segment.confidence}
                                         isStreaming={isStreaming}
                                         showConfidence={showConfidence}
+                                        preserveText={preserveText}
+                                        onRetranscribe={
+                                            onRetranscribeSegment && segment.endTime !== undefined && segment.endTime > segment.timestamp
+                                                ? () => onRetranscribeSegment(segment)
+                                                : undefined
+                                        }
+                                        retranscribeLabel={t('retranscribeThisSegment')}
                                     />
                                 </motion.div>
                             );
@@ -364,11 +420,11 @@ export const VirtualizedTranscriptView: React.FC<VirtualizedTranscriptViewProps>
                             {isLoadingMore ? (
                                 <div className="flex items-center gap-2 text-gray-500">
                                     <div className="w-4 h-4 border-2 border-gray-300 border-t-gray-600 rounded-full animate-spin" />
-                                    <span className="text-sm">Loading more...</span>
+                                    <span className="text-sm">{t('loadingMore')}</span>
                                 </div>
                             ) : hasMore && totalCount > 0 ? (
                                 <span className="text-sm text-gray-400">
-                                    Showing {loadedCount} of {totalCount} segments
+                                    {t('showingSegments')} {loadedCount} {t('of')} {totalCount} {t('segments')}
                                 </span>
                             ) : null}
                         </div>
@@ -383,7 +439,7 @@ export const VirtualizedTranscriptView: React.FC<VirtualizedTranscriptViewProps>
                             className="flex items-center gap-2 mt-4 text-gray-500"
                         >
                             <div className="w-2 h-2 bg-blue-500 rounded-full animate-pulse"></div>
-                            <span className="text-sm">Listening...</span>
+                            <span className="text-sm">{t('listeningForSpeech')}</span>
                         </motion.div>
                     )}
                 </>

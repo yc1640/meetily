@@ -1,0 +1,37 @@
+{
+  "name": "Content Summary",
+  "description": "Turn a video, podcast, lecture, interview, or narration transcript into a structured content brief.",
+  "prompt": "Create a self-contained content brief for someone who has not seen or heard the source. Preserve the source's central subject, reasoning, evidence, examples, terminology, caveats, conclusions, and meaningful changes of viewpoint according to the selected detail level. Separate what the source explicitly claims from examples, speculation, or unanswered questions. Remove greetings, sponsorships, repeated phrasing, filler, and calls to action unless they are part of the substantive content. Do not describe the source as a meeting, do not address the user, and never ask how the transcript should be processed.",
+  "sections": [
+    {
+      "title": "Overview",
+      "instruction": "Explain what the source is about, why it matters, its purpose, and its main conclusion or takeaway in a compact opening",
+      "format": "paragraph"
+    },
+    {
+      "title": "Core Ideas",
+      "instruction": "Present the most important claims, explanations, techniques, events, or lessons in a logical order. Preserve causal relationships and distinguish the source's position from cited or opposing views",
+      "format": "list"
+    },
+    {
+      "title": "Evidence & Important Details",
+      "instruction": "Capture the concrete examples, evidence, mechanisms, comparisons, numbers, names, definitions, or caveats needed to understand and evaluate the core ideas",
+      "format": "list"
+    },
+    {
+      "title": "Practical Takeaways",
+      "instruction": "List methods, recommendations, lessons, or implications that a reader can apply. Keep descriptive content descriptive; do not manufacture advice when the source provides none",
+      "format": "list"
+    },
+    {
+      "title": "Conclusions & Open Questions",
+      "instruction": "State the source's conclusions, qualifications, unresolved questions, or intended takeaway without adding outside opinions",
+      "format": "list"
+    },
+    {
+      "title": "Keywords",
+      "instruction": "List 5 to 12 precise keywords or named concepts useful for searching and categorizing this content",
+      "format": "list"
+    }
+  ]
+}

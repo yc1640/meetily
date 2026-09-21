@@ -109,6 +109,7 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
   const [transcriptModelConfig, setTranscriptModelConfig] = useState<TranscriptModelProps>({
     provider: 'parakeet',
     model: 'parakeet-tdt-0.6b-v3-int8',
+    endpoint: null,
     apiKey: null
   });
 
@@ -201,6 +202,7 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
           setTranscriptModelConfig({
             provider: config.provider || 'parakeet',
             model: config.model || 'parakeet-tdt-0.6b-v3-int8',
+            endpoint: config.endpoint || null,
             apiKey: config.apiKey || null
           });
         }
@@ -250,8 +252,9 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
                   customOpenAIModel: customConfig.model,
                   customOpenAIApiKey: customConfig.apiKey,
                   maxTokens: customConfig.maxTokens,
-                  temperature: customConfig.temperature,
-                  topP: customConfig.topP,
+                  customOpenAIWireApi: customConfig.wireApi,
+                  reasoningEffort: customConfig.reasoningEffort,
+                  verbosity: customConfig.verbosity,
                 }));
 
                 // Seed per-provider model cache from DB

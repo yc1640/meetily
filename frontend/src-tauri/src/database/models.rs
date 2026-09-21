@@ -27,6 +27,7 @@ pub struct Transcript {
     pub id: String,
     pub meeting_id: String,
     pub transcript: String,
+    pub polished_transcript: Option<String>,
     pub timestamp: String,
     pub summary: Option<String>,
     pub action_items: Option<String>,
@@ -49,7 +50,7 @@ pub struct SummaryProcess {
     pub end_time: Option<chrono::DateTime<chrono::Utc>>,
     pub chunk_count: i64,
     pub processing_time: f64,
-    pub metadata: Option<String>, // JSON
+    pub metadata: Option<String>,      // JSON
     pub result_backup: Option<String>, // Backup of result before regeneration
     pub result_backup_timestamp: Option<chrono::DateTime<chrono::Utc>>, // When backup was created
 }
@@ -101,9 +102,9 @@ pub struct Setting {
 impl Setting {
     /// Parse the custom OpenAI config from JSON string
     pub fn get_custom_openai_config(&self) -> Option<crate::summary::CustomOpenAIConfig> {
-        self.custom_openai_config.as_ref().and_then(|json| {
-            serde_json::from_str(json).ok()
-        })
+        self.custom_openai_config
+            .as_ref()
+            .and_then(|json| serde_json::from_str(json).ok())
     }
 }
 
@@ -112,6 +113,10 @@ pub struct TranscriptSetting {
     pub id: String,
     pub provider: String,
     pub model: String,
+    pub endpoint: Option<String>,
+    #[sqlx(rename = "apiKey")]
+    #[serde(rename = "apiKey")]
+    pub api_key: Option<String>,
     #[sqlx(rename = "whisperApiKey")]
     #[serde(rename = "whisperApiKey")]
     pub whisper_api_key: Option<String>,

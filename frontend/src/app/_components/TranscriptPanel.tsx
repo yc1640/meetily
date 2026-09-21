@@ -9,7 +9,9 @@ import { useRecordingState } from '@/contexts/RecordingStateContext';
 import { usePermissionCheck } from '@/hooks/usePermissionCheck';
 import { ModalType } from '@/hooks/useModalState';
 import { useIsLinux } from '@/hooks/usePlatform';
-import { useMemo } from 'react';
+import { useEffect, useMemo, useState } from 'react';
+import { invoke } from '@tauri-apps/api/core';
+import { useAppLanguage } from '@/contexts/AppLanguageContext';
 
 /**
  * TranscriptPanel Component
@@ -33,9 +35,33 @@ export function TranscriptPanel({
   // Contexts
   const { transcripts, transcriptContainerRef, copyTranscript } = useTranscripts();
   const { transcriptModelConfig } = useConfig();
-  const { isRecording, isPaused } = useRecordingState();
+  const { t } = useAppLanguage();
+  const {
+    isRecording,
+    isPaused,
+    transcriptionEnabled: sessionTranscriptionEnabled,
+  } = useRecordingState();
   const { checkPermissions, isChecking, hasSystemAudio, hasMicrophone } = usePermissionCheck();
   const isLinux = useIsLinux();
+  const [transcriptionEnabled, setTranscriptionEnabled] = useState(true);
+
+  useEffect(() => {
+    const loadPreferences = async () => {
+      try {
+        const preferences = await invoke<{ transcription_enabled: boolean }>('get_recording_preferences');
+        setTranscriptionEnabled(preferences.transcription_enabled);
+      } catch (error) {
+        console.error('Failed to load transcription preference:', error);
+      }
+    };
+    const handlePreferenceChange = (event: Event) => {
+      const preferences = (event as CustomEvent<{ transcription_enabled: boolean }>).detail;
+      if (preferences) setTranscriptionEnabled(preferences.transcription_enabled);
+    };
+    loadPreferences();
+    window.addEventListener('recording-preferences-updated', handlePreferenceChange);
+    return () => window.removeEventListener('recording-preferences-updated', handlePreferenceChange);
+  }, []);
 
   // Convert transcripts to segments for virtualized view
   const segments = useMemo(() =>
@@ -62,24 +88,24 @@ export function TranscriptPanel({
                     variant="outline"
                     size="sm"
                     onClick={copyTranscript}
-                    title="Copy Transcript"
+                    title={t('copyTranscript')}
                   >
                     <Copy />
                     <span className='hidden md:inline'>
-                      Copy
+                      {t('copy')}
                     </span>
                   </Button>
                 )}
-                {transcriptModelConfig.provider === "localWhisper" &&
+                {transcriptModelConfig.provider !== "parakeet" && transcriptModelConfig.provider !== "funasrLocal" &&
                   <Button
                     variant="outline"
                     size="sm"
                     onClick={() => showModal('languageSettings')}
-                    title="Language"
+                    title={t('language')}
                   >
                     <GlobeIcon />
                     <span className='hidden md:inline'>
-                      Language
+                      {t('language')}
                     </span>
                   </Button>
                 }
@@ -113,6 +139,7 @@ export function TranscriptPanel({
               isStopping={isStopping}
               enableStreaming={isRecording}
               showConfidence={true}
+              isTranscriptionEnabled={isRecording ? sessionTranscriptionEnabled : transcriptionEnabled}
             />
           </div>
         </div>

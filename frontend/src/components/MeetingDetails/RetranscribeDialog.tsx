@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
-import { RefreshCw, Globe, Loader2, AlertCircle, CheckCircle2, X, Cpu } from 'lucide-react';
+import { RefreshCw, Globe, Loader2, AlertCircle, CheckCircle2, X, Cpu, Clock3 } from 'lucide-react';
 import {
   Dialog,
   DialogContent,
@@ -23,13 +23,22 @@ import { useConfig } from '@/contexts/ConfigContext';
 import { LANGUAGES } from '@/constants/languages';
 import { useTranscriptionModels, ModelOption } from '@/hooks/useTranscriptionModels';
 import Analytics from '@/lib/analytics';
+import { useAppLanguage } from '@/contexts/AppLanguageContext';
+
+export interface RetranscriptionSegmentTarget {
+  id: string;
+  originalText: string;
+  startTime: number;
+  endTime: number;
+}
 
 interface RetranscribeDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   meetingId: string;
   meetingFolderPath: string | null;
-  onComplete?: () => void;
+  segment?: RetranscriptionSegmentTarget | null;
+  onComplete?: () => Promise<void> | void;
 }
 
 interface RetranscriptionProgress {
@@ -51,18 +60,37 @@ interface RetranscriptionError {
   error: string;
 }
 
+interface SegmentRetranscriptionResult {
+  meeting_id: string;
+  segment_id: string;
+  text: string;
+  confidence: number;
+  audio_start_time: number;
+  audio_end_time: number;
+}
+
+function formatRangeTime(seconds: number): string {
+  const minutes = Math.floor(seconds / 60);
+  const remainingSeconds = seconds - minutes * 60;
+  return `${minutes.toString().padStart(2, '0')}:${remainingSeconds.toFixed(1).padStart(4, '0')}`;
+}
+
 export function RetranscribeDialog({
   open,
   onOpenChange,
   meetingId,
   meetingFolderPath,
+  segment,
   onComplete,
 }: RetranscribeDialogProps) {
   const { selectedLanguage, transcriptModelConfig } = useConfig();
+  const { appLanguage, t } = useAppLanguage();
   const [isProcessing, setIsProcessing] = useState(false);
   const [progress, setProgress] = useState<RetranscriptionProgress | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [selectedLang, setSelectedLang] = useState(selectedLanguage || 'auto');
+  const operationIdRef = useRef(0);
+  const isSegmentMode = Boolean(segment);
 
   // Use centralized model fetching hook
   const {
@@ -93,12 +121,35 @@ export function RetranscribeDialog({
     return availableModels.find(m => m.provider === provider && m.name === name);
   }, [selectedModelKey, availableModels]);
   const isParakeetModel = selectedModelDetails?.provider === 'parakeet';
+  const isFunAsrLocalModel = selectedModelDetails?.provider === 'funasrLocal';
+  const isQwen3AsrModel = selectedModelDetails?.provider === 'qwen3Asr';
+  const keepsOriginalLanguage =
+    isFunAsrLocalModel || isQwen3AsrModel || selectedModelDetails?.provider === 'funasr';
+  const availableLanguages = useMemo(() => {
+    if (isParakeetModel || isFunAsrLocalModel) {
+      return LANGUAGES.filter((language) => language.code === 'auto');
+    }
+    if (isQwen3AsrModel) {
+      const supported = new Set(['auto', 'zh', 'yue', 'en', 'de', 'es', 'fr', 'it', 'pt', 'ru', 'ko', 'ja']);
+      return LANGUAGES.filter((language) => supported.has(language.code));
+    }
+    if (keepsOriginalLanguage) {
+      return LANGUAGES.filter((language) => language.code !== 'auto-translate');
+    }
+    return LANGUAGES;
+  }, [isFunAsrLocalModel, isParakeetModel, isQwen3AsrModel, keepsOriginalLanguage]);
+  const languageDisplayNames = useMemo(
+    () => new Intl.DisplayNames([appLanguage], { type: 'language' }),
+    [appLanguage],
+  );
 
   useEffect(() => {
-    if (isParakeetModel && selectedLang !== 'auto') {
+    if ((isParakeetModel || isFunAsrLocalModel) && selectedLang !== 'auto') {
+      setSelectedLang('auto');
+    } else if (keepsOriginalLanguage && selectedLang === 'auto-translate') {
       setSelectedLang('auto');
     }
-  }, [isParakeetModel, selectedLang]);
+  }, [isFunAsrLocalModel, isParakeetModel, keepsOriginalLanguage, selectedLang]);
 
   // Reset state only when dialog transitions from closed to open
   // This prevents re-initialization when config changes while dialog is already open
@@ -107,6 +158,7 @@ export function RetranscribeDialog({
     prevOpenRef.current = open;
 
     if (open && !wasOpen) {
+      operationIdRef.current += 1;
       resetSelection();
       setIsProcessing(false);
       setProgress(null);
@@ -120,7 +172,7 @@ export function RetranscribeDialog({
 
   // Listen for retranscription events
   useEffect(() => {
-    if (!open) return;
+    if (!open || isSegmentMode) return;
 
     const unlisteners: UnlistenFn[] = [];
     const cleanedUpRef = { current: false };
@@ -153,10 +205,14 @@ export function RetranscribeDialog({
             });
 
             setIsProcessing(false);
-            toast.success(
-              `Retranscription complete! ${event.payload.segments_count} segments created.`
-            );
-            onCompleteRef.current?.();
+            toast.success(t('retranscriptionComplete'), {
+              description: `${event.payload.segments_count} ${t('segments')}`,
+            });
+            try {
+              await onCompleteRef.current?.();
+            } catch (refreshError) {
+              console.error('Meeting was retranscribed but the transcript view could not be refreshed:', refreshError);
+            }
             onOpenChangeRef.current(false);
           }
         }
@@ -194,49 +250,90 @@ export function RetranscribeDialog({
       cleanedUpRef.current = true;
       unlisteners.forEach((unlisten) => unlisten());
     };
-  }, [open, meetingId]);
+  }, [open, meetingId, t, isSegmentMode]);
 
   const handleStartRetranscription = async () => {
     if (!meetingFolderPath) {
-      setError('Meeting folder path not available');
+      setError(t('meetingFolderUnavailable'));
       return;
     }
 
+    if (!selectedModelDetails) {
+      setError(t('chooseTranscriptionModel'));
+      return;
+    }
+
+    const operationId = operationIdRef.current + 1;
+    operationIdRef.current = operationId;
     setIsProcessing(true);
     setError(null);
     setProgress(null);
 
     try {
-      const languageToSend = isParakeetModel ? null : selectedLang === 'auto' ? null : selectedLang;
-      await Analytics.track('enhance_transcript_started', {
-        language: isParakeetModel ? 'auto' : (selectedLang === 'auto' ? 'auto' : selectedLang),
+      const usesAutomaticLanguage = isParakeetModel || isFunAsrLocalModel;
+      const languageToSend = usesAutomaticLanguage || selectedLang === 'auto' ? null : selectedLang;
+      await Analytics.track(isSegmentMode ? 'segment_retranscription_started' : 'enhance_transcript_started', {
+        language: usesAutomaticLanguage ? 'auto' : (selectedLang === 'auto' ? 'auto' : selectedLang),
         model_provider: selectedModelDetails?.provider || '',
         model_name: selectedModelDetails?.name || ''
       });
 
-      await invoke('start_retranscription_command', {
-        meetingId,
-        meetingFolderPath,
-        language: languageToSend,
-        model: selectedModelDetails?.name || null,
-        provider: selectedModelDetails?.provider || null,
-      });
+      if (segment) {
+        const result = await invoke<SegmentRetranscriptionResult>('retranscribe_segment_command', {
+          meetingId,
+          segmentId: segment.id,
+          expectedOriginalText: segment.originalText,
+          language: languageToSend,
+          model: selectedModelDetails.name,
+          provider: selectedModelDetails.provider,
+        });
+        if (operationIdRef.current !== operationId) return;
+
+        await Analytics.track('segment_retranscription_completed', {
+          success: 'true',
+          duration_seconds: (result.audio_end_time - result.audio_start_time).toString(),
+          model_provider: selectedModelDetails.provider,
+          model_name: selectedModelDetails.name,
+        });
+        try {
+          await onCompleteRef.current?.();
+        } catch (refreshError) {
+          console.error('Segment was retranscribed but the transcript view could not be refreshed:', refreshError);
+        }
+        if (operationIdRef.current !== operationId) return;
+        setIsProcessing(false);
+        toast.success(t('segmentRetranscriptionComplete'));
+        onOpenChangeRef.current(false);
+      } else {
+        await invoke('start_retranscription_command', {
+          meetingId,
+          meetingFolderPath,
+          language: languageToSend,
+          model: selectedModelDetails.name,
+          provider: selectedModelDetails.provider,
+        });
+      }
     } catch (err: any) {
+      if (operationIdRef.current !== operationId) return;
       setIsProcessing(false);
       const errorMsg = typeof err === 'string' ? err : (err?.message || String(err));
       setError(errorMsg);
 
-      await Analytics.trackError('enhance_transcript_failed', errorMsg);
+      await Analytics.trackError(
+        isSegmentMode ? 'segment_retranscription_failed' : 'enhance_transcript_failed',
+        errorMsg,
+      );
     }
   };
 
   const handleCancel = async () => {
     if (isProcessing) {
+      operationIdRef.current += 1;
       try {
         await invoke('cancel_retranscription_command');
         setIsProcessing(false);
         setProgress(null);
-        toast.info('Retranscription cancelled');
+        toast.info(t('retranscriptionCancelled'));
       } catch (err) {
         console.error('Failed to cancel retranscription:', err);
       }
@@ -276,61 +373,84 @@ export function RetranscribeDialog({
             {isProcessing ? (
               <>
                 <Loader2 className="h-5 w-5 animate-spin text-blue-600" />
-                Retranscribing...
+                {isSegmentMode ? t('retranscribingSegment') : t('retranscribing')}
               </>
             ) : error ? (
               <>
                 <AlertCircle className="h-5 w-5 text-red-600" />
-                Retranscription Failed
+                {isSegmentMode ? t('segmentRetranscriptionFailed') : t('retranscriptionFailed')}
               </>
             ) : (
               <>
                 <RefreshCw className="h-5 w-5 text-blue-600" />
-                Retranscribe Meeting
+                {isSegmentMode ? t('retranscribeSegment') : t('retranscribeMeeting')}
               </>
             )}
           </DialogTitle>
           <DialogDescription>
             {isProcessing
-              ? progress?.message || 'Processing audio...'
+              ? progress?.message || (isSegmentMode ? t('retranscribingSegmentDescription') : t('processingAudio'))
               : error
-                ? 'An error occurred during retranscription'
-                : 'Re-process the audio with different language settings'}
+                ? (isSegmentMode ? t('segmentRetranscriptionErrorDescription') : t('retranscriptionErrorDescription'))
+                : (isSegmentMode ? t('retranscribeSegmentDescription') : t('retranscribeDescription'))}
           </DialogDescription>
         </DialogHeader>
 
         <div className="space-y-4 py-4">
+          {!isProcessing && !error && segment && (
+            <div className="space-y-2 rounded-lg border border-gray-200 bg-gray-50 p-3">
+              <div className="flex items-center gap-2 text-xs font-medium text-gray-600">
+                <Clock3 className="h-4 w-4" aria-hidden="true" />
+                <span>
+                  {t('selectedAudioRange')} {formatRangeTime(segment.startTime)}–{formatRangeTime(segment.endTime)}
+                </span>
+              </div>
+              <p className="max-h-24 overflow-y-auto whitespace-pre-wrap break-words text-sm leading-6 text-gray-800">
+                {segment.originalText}
+              </p>
+              <p className="text-xs leading-5 text-gray-500">
+                {t('segmentRetranscriptionDataNotice')}
+              </p>
+            </div>
+          )}
+
           {!isProcessing && !error && (
-            !isParakeetModel ? (
+            !isParakeetModel && !isFunAsrLocalModel ? (
               <div className="space-y-3">
                 <div className="flex items-center gap-2">
                   <Globe className="h-4 w-4 text-muted-foreground" />
-                  <span className="text-sm font-medium">Language</span>
+                  <span className="text-sm font-medium">{t('language')}</span>
                 </div>
                 <Select value={selectedLang} onValueChange={setSelectedLang}>
                   <SelectTrigger className="w-full">
-                    <SelectValue placeholder="Select language" />
+                    <SelectValue placeholder={t('selectLanguage')} />
                   </SelectTrigger>
                   <SelectContent className="max-h-60">
-                    {LANGUAGES.map((lang) => (
+                    {availableLanguages.map((lang) => (
                       <SelectItem key={lang.code} value={lang.code}>
-                        {lang.name}
+                        {lang.code === 'auto'
+                          ? t('autoDetectOriginal')
+                          : lang.code === 'auto-translate'
+                            ? t('autoTranslateEnglish')
+                            : languageDisplayNames.of(lang.code) || lang.name}
                       </SelectItem>
                     ))}
                   </SelectContent>
                 </Select>
                 <p className="text-xs text-muted-foreground">
-                  Select a specific language to improve accuracy, or use auto-detect
+                  {t('specificLanguageHint')}
                 </p>
               </div>
             ) : (
               <div className="space-y-3">
                 <div className="flex items-center gap-2">
                   <Globe className="h-4 w-4 text-muted-foreground" />
-                  <span className="text-sm font-medium">Language</span>
+                  <span className="text-sm font-medium">{t('language')}</span>
                 </div>
                 <p className="text-xs text-muted-foreground">
-                  Language selection isn't supported for Parakeet. It always uses automatic detection.
+                  {isFunAsrLocalModel
+                    ? t('funasrLocalLanguageDescription')
+                    : t('parakeetRetranscriptionLanguage')}
                 </p>
               </div>
             )
@@ -340,23 +460,37 @@ export function RetranscribeDialog({
             <div className="space-y-3">
               <div className="flex items-center gap-2">
                 <Cpu className="h-4 w-4 text-muted-foreground" />
-                <span className="text-sm font-medium">Model</span>
+                <span className="text-sm font-medium">{t('model')}</span>
               </div>
               <Select value={selectedModelKey} onValueChange={setSelectedModelKey} disabled={loadingModels}>
                 <SelectTrigger className="w-full">
-                  <SelectValue placeholder={loadingModels ? "Loading models..." : "Select model"} />
+                  <SelectValue placeholder={loadingModels ? t('loadingModels') : t('selectModel')} />
                 </SelectTrigger>
                 <SelectContent>
                   {availableModels.map((model) => (
                     <SelectItem key={`${model.provider}:${model.name}`} value={`${model.provider}:${model.name}`}>
-                      {model.displayName} ({Math.round(model.size_mb)} MB)
+                      {model.displayName}
+                      {model.size_mb !== undefined && ` (${Math.round(model.size_mb)} MB)`}
                     </SelectItem>
                   ))}
                 </SelectContent>
               </Select>
               <p className="text-xs text-muted-foreground">
-                Choose a transcription model
+                {t('chooseTranscriptionModel')}
               </p>
+            </div>
+          )}
+
+          {!isProcessing && !error && !loadingModels && availableModels.length === 0 && (
+            <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
+              {t('noTranscriptionModelsAvailable')}
+            </div>
+          )}
+
+          {isProcessing && isSegmentMode && (
+            <div className="flex min-h-32 flex-col items-center justify-center gap-3 text-center">
+              <Loader2 className="h-7 w-7 animate-spin text-blue-600" aria-hidden="true" />
+              <p className="text-sm text-gray-600">{t('retranscribingSegmentDescription')}</p>
             </div>
           )}
 
@@ -391,28 +525,28 @@ export function RetranscribeDialog({
           {!isProcessing && !error && (
             <>
               <Button variant="outline" onClick={() => onOpenChange(false)}>
-                Cancel
+                {t('cancel')}
               </Button>
               <Button
                 onClick={handleStartRetranscription}
                 className="bg-blue-600 hover:bg-blue-700"
-                disabled={!meetingFolderPath}
+                disabled={!meetingFolderPath || loadingModels || !selectedModelDetails}
               >
                 <RefreshCw className="h-4 w-4 mr-2" />
-                Start Retranscription
+                {isSegmentMode ? t('startSegmentRetranscription') : t('startRetranscription')}
               </Button>
             </>
           )}
           {isProcessing && (
             <Button variant="outline" onClick={handleCancel}>
               <X className="h-4 w-4 mr-2" />
-              Cancel
+              {t('cancel')}
             </Button>
           )}
           {error && (
             <>
               <Button variant="outline" onClick={() => onOpenChange(false)}>
-                Close
+                {t('close')}
               </Button>
               <Button
                 onClick={() => {
@@ -421,7 +555,7 @@ export function RetranscribeDialog({
                 }}
                 variant="outline"
               >
-                Try Again
+                {t('tryAgain')}
               </Button>
             </>
           )}

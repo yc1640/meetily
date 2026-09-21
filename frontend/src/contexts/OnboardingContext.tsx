@@ -46,6 +46,8 @@ interface OnboardingContextType {
   recommendedSummaryModel: string;
   databaseExists: boolean;
   isBackgroundDownloading: boolean;
+  downloadTranscriptionDuringSetup: boolean;
+  downloadSummaryDuringSetup: boolean;
   // Permissions
   permissions: OnboardingPermissions;
   permissionsSkipped: boolean;
@@ -58,6 +60,8 @@ interface OnboardingContextType {
   setSummaryModelDownloaded: (value: boolean) => void;
   setSelectedSummaryModel: (value: string) => void;
   setDatabaseExists: (value: boolean) => void;
+  setDownloadTranscriptionDuringSetup: (value: boolean) => void;
+  setDownloadSummaryDuringSetup: (value: boolean) => void;
   setPermissionStatus: (permission: keyof OnboardingPermissions, status: PermissionStatus) => void;
   setPermissionsSkipped: (skipped: boolean) => void;
   completeOnboarding: () => Promise<void>;
@@ -96,6 +100,8 @@ export function OnboardingProvider({ children }: { children: React.ReactNode }) 
   const [recommendedSummaryModel, setRecommendedSummaryModel] = useState<string>('');
   const [databaseExists, setDatabaseExists] = useState(false);
   const [isBackgroundDownloading, setIsBackgroundDownloading] = useState(false);
+  const [downloadTranscriptionDuringSetup, setDownloadTranscriptionDuringSetup] = useState(true);
+  const [downloadSummaryDuringSetup, setDownloadSummaryDuringSetup] = useState(true);
 
   // Permissions state
   const [permissions, setPermissions] = useState<OnboardingPermissions>({
@@ -483,13 +489,13 @@ export function OnboardingProvider({ children }: { children: React.ReactNode }) 
         refresh: true,
       });
       setSummaryModelDownloaded(selectedModelReady);
-      if (!selectedModelReady) {
-        requestSummaryModelDownload(modelToSave);
-      }
 
-      // Onboarding always uses builtin-ai with selected model
+      // Save the selected defaults without forcing a download. Users can finish setup
+      // in recording-only mode and download or link models later from Settings.
       await invoke('complete_onboarding', {
         model: modelToSave,
+        parakeetDownloaded,
+        summaryDownloaded: selectedModelReady,
       });
       setCompleted(true);
       console.log('[OnboardingContext] Onboarding completed with model:', modelToSave);
@@ -615,6 +621,8 @@ export function OnboardingProvider({ children }: { children: React.ReactNode }) 
         recommendedSummaryModel,
         databaseExists,
         isBackgroundDownloading,
+        downloadTranscriptionDuringSetup,
+        downloadSummaryDuringSetup,
         permissions,
         permissionsSkipped,
         goToStep,
@@ -624,6 +632,8 @@ export function OnboardingProvider({ children }: { children: React.ReactNode }) 
         setSummaryModelDownloaded,
         setSelectedSummaryModel,
         setDatabaseExists,
+        setDownloadTranscriptionDuringSetup,
+        setDownloadSummaryDuringSetup,
         setPermissionStatus,
         setPermissionsSkipped,
         completeOnboarding,

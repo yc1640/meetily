@@ -29,6 +29,7 @@ import {
 } from '@/components/ui/command';
 import { cn, isOllamaNotInstalledError } from '@/lib/utils';
 import { toast } from 'sonner';
+import { useAppLanguage } from '@/contexts/AppLanguageContext';
 
 export interface ModelConfig {
   provider: 'ollama' | 'groq' | 'claude' | 'openai' | 'openrouter' | 'builtin-ai' | 'custom-openai';
@@ -41,8 +42,9 @@ export interface ModelConfig {
   customOpenAIModel?: string | null;
   customOpenAIApiKey?: string | null;
   maxTokens?: number | null;
-  temperature?: number | null;
-  topP?: number | null;
+  customOpenAIWireApi?: 'responses' | 'chat-completions';
+  reasoningEffort?: 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max';
+  verbosity?: 'low' | 'medium' | 'high';
 }
 
 interface OllamaModel {
@@ -116,10 +118,12 @@ export function ModelSettingsModal({
   skipInitialFetch = false,
   layout = 'inline',
 }: ModelSettingsModalProps) {
-  // Use ConfigContext if available, fallback to props for backward compatibility
+  const { t } = useAppLanguage();
+  // The caller owns the editable draft. Using ConfigContext's modelConfig here
+  // overwrote local selections before the user could save them.
   const configContext = useConfig();
-  const modelConfig = configContext?.modelConfig || propsModelConfig;
-  const setModelConfig = configContext?.setModelConfig || propsSetModelConfig;
+  const modelConfig = propsModelConfig;
+  const setModelConfig = propsSetModelConfig;
   const providerApiKeys = configContext?.providerApiKeys;
   const updateProviderApiKey = configContext?.updateProviderApiKey;
 
@@ -150,8 +154,9 @@ export function ModelSettingsModal({
   const [customOpenAIModel, setCustomOpenAIModel] = useState<string>(modelConfig.customOpenAIModel || '');
   const [customOpenAIApiKey, setCustomOpenAIApiKey] = useState<string>(modelConfig.customOpenAIApiKey || '');
   const [customMaxTokens, setCustomMaxTokens] = useState<string>(modelConfig.maxTokens?.toString() || '');
-  const [customTemperature, setCustomTemperature] = useState<string>(modelConfig.temperature?.toString() || '');
-  const [customTopP, setCustomTopP] = useState<string>(modelConfig.topP?.toString() || '');
+  const [customOpenAIWireApi, setCustomOpenAIWireApi] = useState<'responses' | 'chat-completions'>(modelConfig.customOpenAIWireApi || 'responses');
+  const [customReasoningEffort, setCustomReasoningEffort] = useState<ModelConfig['reasoningEffort']>(modelConfig.reasoningEffort || 'high');
+  const [customVerbosity, setCustomVerbosity] = useState<ModelConfig['verbosity']>(modelConfig.verbosity || 'high');
   const [isCustomOpenAIAdvancedOpen, setIsCustomOpenAIAdvancedOpen] = useState<boolean>(false);
   const [isTestingConnection, setIsTestingConnection] = useState<boolean>(false);
 
@@ -296,8 +301,9 @@ export function ModelSettingsModal({
                 setCustomOpenAIModel(customConfig.model || '');
                 setCustomOpenAIApiKey(customConfig.apiKey || '');
                 setCustomMaxTokens(customConfig.maxTokens?.toString() || '');
-                setCustomTemperature(customConfig.temperature?.toString() || '');
-                setCustomTopP(customConfig.topP?.toString() || '');
+                setCustomOpenAIWireApi(customConfig.wireApi || 'responses');
+                setCustomReasoningEffort(customConfig.reasoningEffort || 'high');
+                setCustomVerbosity(customConfig.verbosity || 'high');
               }
             } catch (err) {
               console.error('Failed to fetch custom OpenAI config:', err);
@@ -356,8 +362,9 @@ export function ModelSettingsModal({
       setCustomOpenAIModel(modelConfig.customOpenAIModel || '');
       setCustomOpenAIApiKey(modelConfig.customOpenAIApiKey || '');
       setCustomMaxTokens(modelConfig.maxTokens?.toString() || '');
-      setCustomTemperature(modelConfig.temperature?.toString() || '');
-      setCustomTopP(modelConfig.topP?.toString() || '');
+      setCustomOpenAIWireApi(modelConfig.customOpenAIWireApi || 'responses');
+      setCustomReasoningEffort(modelConfig.reasoningEffort || 'high');
+      setCustomVerbosity(modelConfig.verbosity || 'high');
     }
   }, [
     modelConfig.provider,
@@ -365,8 +372,9 @@ export function ModelSettingsModal({
     modelConfig.customOpenAIModel,
     modelConfig.customOpenAIApiKey,
     modelConfig.maxTokens,
-    modelConfig.temperature,
-    modelConfig.topP
+    modelConfig.customOpenAIWireApi,
+    modelConfig.reasoningEffort,
+    modelConfig.verbosity
   ]);
 
   // Reset hasAutoFetched flag and clear models when switching away from Ollama
@@ -519,7 +527,7 @@ export function ModelSettingsModal({
       }
     } catch (err) {
       console.error('Error loading Built-in AI models:', err);
-      toast.error('Failed to load Built-in AI models');
+      toast.error(t('modelsLoadFailed'));
     }
   };
 
@@ -623,13 +631,14 @@ export function ModelSettingsModal({
           apiKey: customOpenAIApiKey.trim() || null,
           model: customOpenAIModel.trim(),
           maxTokens: customMaxTokens ? parseInt(customMaxTokens, 10) : null,
-          temperature: customTemperature ? parseFloat(customTemperature) : null,
-          topP: customTopP ? parseFloat(customTopP) : null,
+          wireApi: customOpenAIWireApi,
+          reasoningEffort: customReasoningEffort,
+          verbosity: customVerbosity,
         });
         console.log('Custom OpenAI config saved successfully');
       } catch (err) {
         console.error('Failed to save custom OpenAI config:', err);
-        toast.error('Failed to save custom OpenAI configuration');
+        toast.error(t('failedSaveCustomConfig'));
         return;
       }
     }
@@ -645,8 +654,9 @@ export function ModelSettingsModal({
       customOpenAIModel: modelConfig.provider === 'custom-openai' ? customOpenAIModel.trim() : null,
       customOpenAIApiKey: modelConfig.provider === 'custom-openai' && customOpenAIApiKey.trim() ? customOpenAIApiKey.trim() : null,
       maxTokens: modelConfig.provider === 'custom-openai' && customMaxTokens ? parseInt(customMaxTokens, 10) : null,
-      temperature: modelConfig.provider === 'custom-openai' && customTemperature ? parseFloat(customTemperature) : null,
-      topP: modelConfig.provider === 'custom-openai' && customTopP ? parseFloat(customTopP) : null,
+      customOpenAIWireApi: modelConfig.provider === 'custom-openai' ? customOpenAIWireApi : undefined,
+      reasoningEffort: modelConfig.provider === 'custom-openai' ? customReasoningEffort : undefined,
+      verbosity: modelConfig.provider === 'custom-openai' ? customVerbosity : undefined,
       // For custom-openai, use the customOpenAIModel as the model field
       model: modelConfig.provider === 'custom-openai' ? customOpenAIModel.trim() : modelConfig.model,
     };
@@ -671,18 +681,21 @@ export function ModelSettingsModal({
   // Test custom OpenAI connection
   const testCustomOpenAIConnection = async () => {
     if (!customOpenAIEndpoint.trim() || !customOpenAIModel.trim()) {
-      toast.error('Please enter endpoint URL and model name first');
+      toast.error(t('enterEndpointAndModel'));
       return;
     }
 
     setIsTestingConnection(true);
     try {
-      const result = await invoke<{ status: string; message: string }>('api_test_custom_openai_connection', {
+      await invoke<{ status: string; message: string }>('api_test_custom_openai_connection', {
         endpoint: customOpenAIEndpoint.trim(),
         apiKey: customOpenAIApiKey.trim() || null,
         model: customOpenAIModel.trim(),
+        wireApi: customOpenAIWireApi,
+        reasoningEffort: customReasoningEffort,
+        verbosity: customVerbosity,
       });
-      toast.success(result.message || 'Connection successful!');
+      toast.success(t('connectionSuccessful'));
     } catch (err) {
       const errorMsg = err instanceof Error ? err.message : String(err);
       toast.error(errorMsg);
@@ -704,8 +717,8 @@ export function ModelSettingsModal({
 
     // Prevent duplicate downloads (defense in depth - backend also checks)
     if (isDownloading(recommendedModel)) {
-      toast.info(`${recommendedModel} is already downloading`, {
-        description: `Progress: ${Math.round(getProgress(recommendedModel) || 0)}%`
+      toast.info(`${recommendedModel} ${t('alreadyDownloading')}`, {
+        description: `${t('progress')}: ${Math.round(getProgress(recommendedModel) || 0)}%`
       });
       return;
     }
@@ -731,11 +744,11 @@ export function ModelSettingsModal({
 
       // Check if Ollama is not installed and show appropriate error
       if (isOllamaNotInstalledError(errorMsg)) {
-        toast.error('Ollama is not installed', {
-          description: 'Please download and install Ollama before downloading models.',
+        toast.error(t('ollamaNotInstalled'), {
+          description: t('ollamaInstallDescription'),
           duration: 7000,
           action: {
-            label: 'Download',
+            label: t('download'),
             onClick: () => invoke('open_external_url', { url: 'https://ollama.com/download' })
           }
         });
@@ -755,7 +768,7 @@ export function ModelSettingsModal({
         endpoint
       });
 
-      toast.success(`Model ${modelName} deleted`);
+      toast.success(t('modelDeleted'), { description: modelName });
       await fetchOllamaModels(true); // Refresh list
     } catch (err) {
       const errorMsg = err instanceof Error ? err.message : 'Failed to delete model';
@@ -804,12 +817,12 @@ export function ModelSettingsModal({
   return (
     <div>
       <div className="flex justify-between items-center mb-4">
-        <h3 className="text-lg font-semibold">Model Settings</h3>
+        <h3 className="text-lg font-semibold">{t('modelSettings')}</h3>
       </div>
 
       <div className="space-y-4">
         <div>
-          <Label>Summarization Model</Label>
+          <Label>{t('summarizationModel')}</Label>
           <div className="flex space-x-2 mt-1">
             <Select
               value={modelConfig.provider}
@@ -861,8 +874,9 @@ export function ModelSettingsModal({
                       setCustomOpenAIModel(config.model || '');
                       setCustomOpenAIApiKey(config.apiKey || '');
                       setCustomMaxTokens(config.maxTokens?.toString() || '');
-                      setCustomTemperature(config.temperature?.toString() || '');
-                      setCustomTopP(config.topP?.toString() || '');
+                      setCustomOpenAIWireApi(config.wireApi || 'responses');
+                      setCustomReasoningEffort(config.reasoningEffort || 'high');
+                      setCustomVerbosity(config.verbosity || 'high');
                     }
                   }).catch((err) => {
                     console.error('Failed to load custom OpenAI config:', err);
@@ -871,12 +885,12 @@ export function ModelSettingsModal({
               }}
             >
               <SelectTrigger>
-                <SelectValue placeholder="Select provider" />
+                <SelectValue placeholder={t('selectProvider')} />
               </SelectTrigger>
               <SelectContent className="max-h-64 overflow-y-auto">
-                <SelectItem value="builtin-ai">Built-in AI (Offline, No API needed)</SelectItem>
+                <SelectItem value="builtin-ai">{t('builtInAiOffline')}</SelectItem>
                 <SelectItem value="claude">Claude</SelectItem>
-                <SelectItem value="custom-openai">Custom Server (OpenAI)</SelectItem>
+                <SelectItem value="custom-openai">{t('customOpenAiServer')}</SelectItem>
                 <SelectItem value="groq">Groq</SelectItem>
                 <SelectItem value="ollama">Ollama</SelectItem>
                 <SelectItem value="openai">OpenAI</SelectItem>
@@ -894,14 +908,14 @@ export function ModelSettingsModal({
                     className="flex-1 max-w-[200px] justify-between font-normal"
                   >
                     <span className="truncate">
-                      {modelConfig.model || "Select model..."}
+                      {modelConfig.model || t('selectModel')}
                     </span>
                     <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
                   </Button>
                 </PopoverTrigger>
                 <PopoverContent className="w-[250px] p-0" align="start">
                   <Command>
-                    <CommandInput placeholder="Search models..." />
+                    <CommandInput placeholder={t('searchModels')} />
                     <CommandList className="max-h-[300px]">
                       {(modelConfig.provider === 'openrouter' && isLoadingOpenRouter) ||
                        (modelConfig.provider === 'openai' && isLoadingOpenAI) ||
@@ -909,11 +923,11 @@ export function ModelSettingsModal({
                        (modelConfig.provider === 'groq' && isLoadingGroq) ? (
                         <div className="py-6 text-center text-sm text-muted-foreground">
                           <RefreshCw className="mx-auto h-4 w-4 animate-spin mb-2" />
-                          Loading models...
+                          {t('loadingModels')}
                         </div>
                       ) : (
                         <>
-                          <CommandEmpty>No models found.</CommandEmpty>
+                          <CommandEmpty>{t('noModelsFound')}</CommandEmpty>
                           <CommandGroup>
                             {modelOptions[modelConfig.provider]?.map((model) => (
                               <CommandItem
@@ -948,7 +962,7 @@ export function ModelSettingsModal({
         {modelConfig.provider === 'custom-openai' && (
           <div className="space-y-4 border-t pt-4">
             <div>
-              <Label htmlFor="custom-endpoint">Endpoint URL *</Label>
+              <Label htmlFor="custom-endpoint">{t('endpoint')} *</Label>
               <Input
                 id="custom-endpoint"
                 value={customOpenAIEndpoint}
@@ -957,32 +971,53 @@ export function ModelSettingsModal({
                 className="mt-1"
               />
               <p className="text-xs text-muted-foreground mt-1">
-                Base URL of the OpenAI-compatible API
+                {t('baseUrlDescription')}
               </p>
             </div>
 
             <div>
-              <Label htmlFor="custom-model">Model Name *</Label>
+              <Label htmlFor="custom-wire-api">{t('apiProtocol')}</Label>
+              <Select
+                value={customOpenAIWireApi}
+                onValueChange={(value) => setCustomOpenAIWireApi(value as 'responses' | 'chat-completions')}
+              >
+                <SelectTrigger id="custom-wire-api" className="mt-1">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="responses">Responses API（{t('recommended')}）</SelectItem>
+                  <SelectItem value="chat-completions">Chat Completions（{t('legacy')}）</SelectItem>
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-muted-foreground mt-1">
+                {customOpenAIWireApi === 'responses'
+                  ? t('responsesApiDescription')
+                  : t('chatCompletionsDescription')}
+              </p>
+            </div>
+
+            <div>
+              <Label htmlFor="custom-model">{t('modelName')} *</Label>
               <Input
                 id="custom-model"
                 value={customOpenAIModel}
                 onChange={(e) => setCustomOpenAIModel(e.target.value)}
-                placeholder="gpt-4, llama-3-70b, etc."
+                placeholder="gpt-4, llama-3-70b"
                 className="mt-1"
               />
               <p className="text-xs text-muted-foreground mt-1">
-                Model identifier to use for requests
+                {t('modelIdentifierDescription')}
               </p>
             </div>
 
             <div>
-              <Label htmlFor="custom-api-key">API Key (optional)</Label>
+              <Label htmlFor="custom-api-key">{t('apiKeyOptionalLabel')}</Label>
               <Input
                 id="custom-api-key"
                 type="password"
                 value={customOpenAIApiKey}
                 onChange={(e) => setCustomOpenAIApiKey(e.target.value)}
-                placeholder="Leave empty if not required"
+                placeholder={t('leaveEmptyIfNotRequired')}
                 className="mt-1"
               />
             </div>
@@ -993,7 +1028,7 @@ export function ModelSettingsModal({
                 className="flex items-center justify-between cursor-pointer py-2"
                 onClick={() => setIsCustomOpenAIAdvancedOpen(!isCustomOpenAIAdvancedOpen)}
               >
-                <Label className="cursor-pointer">Advanced Options</Label>
+                <Label className="cursor-pointer">{t('advancedOptions')}</Label>
                 {isCustomOpenAIAdvancedOpen ? (
                   <ChevronUp className="h-4 w-4 text-muted-foreground" />
                 ) : (
@@ -1004,44 +1039,56 @@ export function ModelSettingsModal({
               {isCustomOpenAIAdvancedOpen && (
                 <div className="space-y-3 pl-2 border-l-2 border-muted mt-2">
                   <div>
-                    <Label htmlFor="custom-max-tokens">Max Tokens</Label>
+                    <Label htmlFor="custom-max-tokens">{t('maxTokens')}</Label>
                     <Input
                       id="custom-max-tokens"
                       type="number"
                       value={customMaxTokens}
                       onChange={(e) => setCustomMaxTokens(e.target.value)}
-                      placeholder="e.g., 4096"
+                      placeholder="4096"
                       className="mt-1"
                     />
                   </div>
-                  <div>
-                    <Label htmlFor="custom-temperature">Temperature (0.0-2.0)</Label>
-                    <Input
-                      id="custom-temperature"
-                      type="number"
-                      step="0.1"
-                      min="0"
-                      max="2"
-                      value={customTemperature}
-                      onChange={(e) => setCustomTemperature(e.target.value)}
-                      placeholder="e.g., 0.7"
-                      className="mt-1"
-                    />
-                  </div>
-                  <div>
-                    <Label htmlFor="custom-top-p">Top P (0.0-1.0)</Label>
-                    <Input
-                      id="custom-top-p"
-                      type="number"
-                      step="0.1"
-                      min="0"
-                      max="1"
-                      value={customTopP}
-                      onChange={(e) => setCustomTopP(e.target.value)}
-                      placeholder="e.g., 0.9"
-                      className="mt-1"
-                    />
-                  </div>
+                  {customOpenAIWireApi === 'responses' && (
+                    <>
+                      <div>
+                        <Label htmlFor="custom-reasoning-effort">{t('reasoningEffort')}</Label>
+                        <Select
+                          value={customReasoningEffort}
+                          onValueChange={(value) => setCustomReasoningEffort(value as ModelConfig['reasoningEffort'])}
+                        >
+                          <SelectTrigger id="custom-reasoning-effort" className="mt-1">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="none">{t('effortNone')}</SelectItem>
+                            <SelectItem value="minimal">{t('effortMinimal')}</SelectItem>
+                            <SelectItem value="low">{t('effortLow')}</SelectItem>
+                            <SelectItem value="medium">{t('effortMedium')}</SelectItem>
+                            <SelectItem value="high">{t('effortHigh')}</SelectItem>
+                            <SelectItem value="xhigh">{t('effortXHigh')}</SelectItem>
+                            <SelectItem value="max">{t('effortMax')}</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      <div>
+                        <Label htmlFor="custom-verbosity">{t('outputVerbosity')}</Label>
+                        <Select
+                          value={customVerbosity}
+                          onValueChange={(value) => setCustomVerbosity(value as ModelConfig['verbosity'])}
+                        >
+                          <SelectTrigger id="custom-verbosity" className="mt-1">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="low">{t('verbosityLow')}</SelectItem>
+                            <SelectItem value="medium">{t('verbosityMedium')}</SelectItem>
+                            <SelectItem value="high">{t('verbosityHigh')}</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+                    </>
+                  )}
                 </div>
               )}
             </div>
@@ -1058,12 +1105,12 @@ export function ModelSettingsModal({
               {isTestingConnection ? (
                 <>
                   <RefreshCw className="mr-2 h-4 w-4 animate-spin" />
-                  Testing Connection...
+                  {t('testingConnection')}
                 </>
               ) : (
                 <>
                   <CheckCircle2 className="mr-2 h-4 w-4" />
-                  Test Connection
+                  {t('testConnection')}
                 </>
               )}
             </Button>
@@ -1072,14 +1119,14 @@ export function ModelSettingsModal({
 
         {requiresApiKey && (
           <div>
-            <Label>API Key</Label>
+            <Label>{t('apiKey')}</Label>
             <div className="relative mt-1">
               <Input
                 type={showApiKey ? 'text' : 'password'}
                 value={apiKey || ''}
                 onChange={(e) => setApiKey(e.target.value)}
                 disabled={isApiKeyLocked}
-                placeholder="Enter your API key"
+                placeholder={t('enterApiKey')}
                 className="pr-24"
               />
               {isApiKeyLocked && apiKey?.trim() && (
@@ -1096,7 +1143,7 @@ export function ModelSettingsModal({
                     size="icon"
                     onClick={() => setIsApiKeyLocked(!isApiKeyLocked)}
                     className={isLockButtonVibrating ? 'animate-vibrate text-red-500' : ''}
-                    title={isApiKeyLocked ? 'Unlock to edit' : 'Lock to prevent editing'}
+                    title={isApiKeyLocked ? t('unlockToEdit') : t('lockToPreventEditing')}
                   >
                     {isApiKeyLocked ? <Lock /> : <Unlock />}
                   </Button>
@@ -1120,7 +1167,7 @@ export function ModelSettingsModal({
               className="flex items-center justify-between cursor-pointer py-2"
               onClick={() => setIsEndpointSectionCollapsed(!isEndpointSectionCollapsed)}
             >
-              <Label className="cursor-pointer">Custom Endpoint (optional)</Label>
+              <Label className="cursor-pointer">{t('customEndpointOptional')}</Label>
               {isEndpointSectionCollapsed ? (
                 <ChevronDown className="h-4 w-4 text-muted-foreground" />
               ) : (
@@ -1131,7 +1178,7 @@ export function ModelSettingsModal({
             {!isEndpointSectionCollapsed && (
               <>
                 <p className="text-sm text-muted-foreground mt-1 mb-2">
-                  Leave empty or enter a custom endpoint (e.g., http://x.yy.zz:11434)
+                  {t('customEndpointDescription')}
                 </p>
                 <div className="flex gap-2 mt-1">
                   <div className="relative flex-1">
@@ -1170,12 +1217,12 @@ export function ModelSettingsModal({
                     {isLoadingOllama ? (
                       <>
                         <RefreshCw className="mr-2 h-4 w-4 animate-spin" />
-                        Fetching...
+                        {t('fetching')}
                       </>
                     ) : (
                       <>
                         <RefreshCw className="mr-2 h-4 w-4" />
-                        Fetch Models
+                        {t('fetchModels')}
                       </>
                     )}
                   </Button>
@@ -1183,7 +1230,7 @@ export function ModelSettingsModal({
                 {ollamaEndpointChanged && !error && (
                   <Alert className="mt-3 border-yellow-500 bg-yellow-50">
                     <AlertDescription className="text-yellow-800">
-                      Endpoint changed. Please click "Fetch Models" to load models from the new endpoint before saving.
+                      {t('endpointChanged')}
                     </AlertDescription>
                   </Alert>
                 )}
@@ -1195,10 +1242,10 @@ export function ModelSettingsModal({
         {modelConfig.provider === 'ollama' && (
           <div>
             <div className="flex items-center justify-between mb-4">
-              <h4 className="text-sm font-bold">Available Ollama Models</h4>
+              <h4 className="text-sm font-bold">{t('availableOllamaModels')}</h4>
               {lastFetchedEndpoint && models.length > 0 && (
                 <div className="flex items-center gap-2 text-sm">
-                  <span className="text-muted-foreground">Using:</span>
+                  <span className="text-muted-foreground">{t('using')}:</span>
                   <code className="px-2 py-1 bg-muted rounded text-xs">
                     {lastFetchedEndpoint || 'http://localhost:11434'}
                   </code>
@@ -1208,7 +1255,7 @@ export function ModelSettingsModal({
             {models.length > 0 && (
               <div className="mb-4">
                 <Input
-                  placeholder="Search models..."
+                  placeholder={t('searchModels')}
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
                   className="w-full"
@@ -1218,7 +1265,7 @@ export function ModelSettingsModal({
             {isLoadingOllama ? (
               <div className="text-center py-8 text-muted-foreground">
                 <RefreshCw className="mx-auto h-8 w-8 animate-spin mb-2" />
-                Loading models...
+                {t('loadingModels')}
               </div>
             ) : models.length === 0 ? (
               <div className="space-y-3">
@@ -1227,7 +1274,7 @@ export function ModelSettingsModal({
                   <div className="space-y-4">
                     <Alert className="border-orange-500 bg-orange-50">
                       <AlertDescription className="text-orange-800">
-                        Ollama is not installed or not running. Please download and install Ollama to use local models.
+                        {t('ollamaNotInstalled')} {t('ollamaInstallDescription')}
                       </AlertDescription>
                     </Alert>
                     <Button
@@ -1237,10 +1284,10 @@ export function ModelSettingsModal({
                       className="w-full bg-blue-600 hover:bg-blue-700"
                     >
                       <ExternalLink className="mr-2 h-4 w-4" />
-                      Download Ollama
+                      {t('downloadOllama')}
                     </Button>
                     <div className="text-sm text-muted-foreground text-center">
-                      After installing Ollama, restart this application and click "Fetch Models" to continue.
+                      {t('restartAfterOllamaInstall')}
                     </div>
                   </div>
                 ) : (
@@ -1249,8 +1296,8 @@ export function ModelSettingsModal({
                     <Alert className="mb-4">
                       <AlertDescription>
                         {ollamaEndpointChanged
-                          ? 'Endpoint changed. Click "Fetch Models" to load models from the new endpoint.'
-                          : 'No models found. Download a recommended model or click "Fetch Models" to load available Ollama models.'}
+                          ? t('endpointChanged')
+                          : t('noOllamaModels')}
                       </AlertDescription>
                     </Alert>
                     {!ollamaEndpointChanged && (
@@ -1265,12 +1312,12 @@ export function ModelSettingsModal({
                           {isDownloading('gemma3:1b') ? (
                             <>
                               <RefreshCw className="mr-2 h-4 w-4 animate-spin" />
-                              Downloading gemma3:1b...
+                              {t('downloading')} gemma3:1b…
                             </>
                           ) : (
                             <>
                               <Download className="mr-2 h-4 w-4" />
-                              Download gemma3:1b (Recommended, ~800MB)
+                              {t('downloadRecommendedModel')}: gemma3:1b ({t('recommended')}, ~800 MB)
                             </>
                           )}
                         </Button>
@@ -1279,7 +1326,7 @@ export function ModelSettingsModal({
                         {isDownloading('gemma3:1b') && getProgress('gemma3:1b') !== undefined && (
                           <div className="bg-white rounded-md border p-3">
                             <div className="flex items-center justify-between mb-2">
-                              <span className="text-sm font-medium text-blue-600">Downloading gemma3:1b</span>
+                              <span className="text-sm font-medium text-blue-600">{t('downloading')} gemma3:1b</span>
                               <span className="text-sm font-semibold text-blue-600">
                                 {Math.round(getProgress('gemma3:1b')!)}%
                               </span>
@@ -1302,7 +1349,7 @@ export function ModelSettingsModal({
                 {filteredModels.length === 0 ? (
                   <Alert>
                     <AlertDescription>
-                      No models found matching "{searchQuery}". Try a different search term.
+                      {t('noMatchingModels')}
                     </AlertDescription>
                   </Alert>
                 ) : (
@@ -1329,7 +1376,7 @@ export function ModelSettingsModal({
                         >
                           <div>
                             <b className="font-bold">{model.name}&nbsp;</b>
-                            <span className="text-muted-foreground">with a size of </span>
+                            <span className="text-muted-foreground">{t('modelSize')}：</span>
                             <span className="font-mono font-bold text-sm">{model.size}</span>
                           </div>
 
@@ -1337,7 +1384,7 @@ export function ModelSettingsModal({
                           {modelIsDownloading && progress !== undefined && (
                             <div className="mt-3 pt-3 border-t border-gray-200">
                               <div className="flex items-center justify-between mb-2">
-                                <span className="text-sm font-medium text-blue-600">Downloading...</span>
+                                <span className="text-sm font-medium text-blue-600">{t('downloading')}</span>
                                 <span className="text-sm font-semibold text-blue-600">{Math.round(progress)}%</span>
                               </div>
                               <div className="w-full h-2 bg-gray-200 rounded-full overflow-hidden">
@@ -1400,7 +1447,7 @@ export function ModelSettingsModal({
           onClick={handleSave}
           disabled={isDoneDisabled}
         >
-          Save
+          {t('saveModelSettings')}
         </Button>
       </div>
     </div>

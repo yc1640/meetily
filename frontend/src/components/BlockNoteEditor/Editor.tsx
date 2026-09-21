@@ -22,6 +22,7 @@ export default function Editor({ initialContent, onChange, editable = true }: Ed
 
   const editor = useCreateBlockNote({
     initialContent: initialContent as PartialBlock[] | undefined,
+    tables: { headers: true },
   });
 
   console.log('📝 EDITOR: BlockNote editor created successfully');

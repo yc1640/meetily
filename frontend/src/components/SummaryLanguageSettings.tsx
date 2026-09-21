@@ -1,15 +1,22 @@
 'use client';
 
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { Globe, Pin } from 'lucide-react';
 import { Popover, PopoverTrigger, PopoverContent } from '@/components/ui/popover';
 import { LanguagePickerPopover } from '@/components/LanguagePickerPopover';
+import { useAppLanguage } from '@/contexts/AppLanguageContext';
 import { useRecentLanguages } from '@/hooks/useRecentLanguages';
 import { labelForCode } from '@/lib/summary-languages';
 
 export function SummaryLanguageSettings() {
+  const { appLanguage, t } = useAppLanguage();
   const { recents, pinned, addRecent, removeRecent, setPinned } = useRecentLanguages();
   const [pickerOpen, setPickerOpen] = useState(false);
+  const displayNames = useMemo(
+    () => new Intl.DisplayNames([appLanguage], { type: 'language' }),
+    [appLanguage],
+  );
+  const languageName = (code: string) => displayNames.of(code) || labelForCode(code);
 
   const togglePin = (code: string) => {
     setPinned(pinned === code ? null : code);
@@ -19,11 +26,10 @@ export function SummaryLanguageSettings() {
     <div className="bg-white rounded-lg border border-gray-200 p-6 shadow-sm relative">
       <div className="flex items-center gap-2 mb-2">
         <Globe size={18} className="text-gray-500" />
-        <h3 className="text-lg font-semibold text-gray-900">Summary Language</h3>
+        <h3 className="text-lg font-semibold text-gray-900">{t('summaryLanguage')}</h3>
       </div>
       <p className="text-sm text-gray-600 mb-4">
-        Pin one language as the default for new meetings. Unpinned languages remain as
-        quick-switch options in the summary generator. Auto uses the dominant transcript language.
+        {t('summaryLanguageDescription')}
       </p>
 
       <div className="flex flex-wrap items-center gap-2">
@@ -40,9 +46,9 @@ export function SummaryLanguageSettings() {
             >
               <button
                 type="button"
-                aria-label={isPinned ? `Unpin ${labelForCode(code)} as default` : `Pin ${labelForCode(code)} as default`}
+                aria-label={`${isPinned ? t('unpinDefaultLanguage') : t('pinDefaultLanguage')}：${languageName(code)}`}
                 aria-pressed={isPinned}
-                title={isPinned ? 'Click to unset as default' : 'Click to set as default'}
+                title={isPinned ? t('unpinDefaultLanguage') : t('pinDefaultLanguage')}
                 onClick={() => togglePin(code)}
                 className={`flex items-center gap-1.5 pl-3 pr-2 py-1 hover:brightness-95 active:brightness-90 ${
                   isPinned ? 'text-blue-800' : 'text-gray-800'
@@ -53,11 +59,11 @@ export function SummaryLanguageSettings() {
                   className={isPinned ? 'text-blue-600' : 'text-gray-400'}
                   fill={isPinned ? 'currentColor' : 'none'}
                 />
-                {labelForCode(code)}
+                {languageName(code)}
               </button>
               <button
                 type="button"
-                aria-label={`Remove ${labelForCode(code)}`}
+                aria-label={`${t('removeLanguage')}：${languageName(code)}`}
                 onClick={() => removeRecent(code)}
                 className={`pr-2.5 pl-0.5 py-1 leading-none ${isPinned ? 'text-blue-400 hover:text-blue-700' : 'text-gray-400 hover:text-gray-700'}`}
               >
@@ -74,7 +80,7 @@ export function SummaryLanguageSettings() {
               disabled={recents.length >= 5}
               className="inline-flex items-center gap-1 rounded-full border border-dashed border-gray-300 px-3 py-1 text-sm text-gray-600 hover:border-gray-400 hover:text-gray-800 disabled:cursor-not-allowed disabled:opacity-50"
             >
-              ＋ Add language
+              ＋ {t('addLanguage')}
             </button>
           </PopoverTrigger>
           <PopoverContent align="start" className="w-auto p-0 border-0 shadow-none bg-transparent">
@@ -93,8 +99,8 @@ export function SummaryLanguageSettings() {
 
       <p className="text-xs text-gray-400 mt-3">
         {pinned
-          ? `Default: ${labelForCode(pinned)} - click it again to unset. Max 5 quick-switch options.`
-          : 'Click any language to set it as your default. Max 5 quick-switch options.'}
+          ? `${t('defaultLanguage')}：${languageName(pinned)}。${t('unsetDefaultHint')}`
+          : t('setDefaultHint')}
       </p>
     </div>
   );

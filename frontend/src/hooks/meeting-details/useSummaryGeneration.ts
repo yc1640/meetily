@@ -1,5 +1,5 @@
 import { useState, useCallback } from 'react';
-import { Transcript, Summary } from '@/types';
+import { Transcript, Summary, SummaryDetailLevel } from '@/types';
 import { ModelConfig } from '@/components/ModelSettingsModal';
 import { CurrentMeeting, useSidebar } from '@/components/Sidebar/SidebarProvider';
 import { invoke as invokeTauri } from '@tauri-apps/api/core';
@@ -56,6 +56,7 @@ interface UseSummaryGenerationProps {
   modelConfig: ModelConfig;
   isModelConfigLoading: boolean;
   selectedTemplate: string;
+  summaryDetailLevel: SummaryDetailLevel;
   onMeetingUpdated?: () => Promise<void>;
   updateMeetingTitle: (title: string) => void;
   setAiSummary: (summary: Summary | null) => void;
@@ -68,6 +69,7 @@ export function useSummaryGeneration({
   modelConfig,
   isModelConfigLoading,
   selectedTemplate,
+  summaryDetailLevel,
   onMeetingUpdated,
   updateMeetingTitle,
   setAiSummary,
@@ -156,6 +158,7 @@ export function useSummaryGeneration({
         overlap: 1000,
         customPrompt: customPrompt,
         templateId: selectedTemplate,
+        summaryDetailLevel,
         summaryLanguage,
       }) as any;
 
@@ -392,6 +395,7 @@ export function useSummaryGeneration({
     meeting.created_at,
     modelConfig,
     selectedTemplate,
+    summaryDetailLevel,
     startSummaryPolling,
     setAiSummary,
     updateMeetingTitle,
@@ -477,7 +481,8 @@ export function useSummaryGeneration({
     console.log('🚀 Starting summary generation with config:', {
       provider: modelConfig.provider,
       model: modelConfig.model,
-      template: selectedTemplate
+      template: selectedTemplate,
+      detailLevel: summaryDetailLevel,
     });
 
     // Check if Ollama provider has models available
@@ -614,7 +619,7 @@ export function useSummaryGeneration({
       ...summaryPayload,
       customPrompt,
     });
-  }, [meeting.id, fetchAllTranscripts, buildSummaryTranscriptPayload, processSummary, modelConfig, isModelConfigLoading, selectedTemplate]);
+  }, [meeting.id, fetchAllTranscripts, buildSummaryTranscriptPayload, processSummary, modelConfig, isModelConfigLoading, selectedTemplate, summaryDetailLevel]);
 
   // Public API: Regenerate summary from the current saved transcript
   const handleRegenerateSummary = useCallback(async () => {

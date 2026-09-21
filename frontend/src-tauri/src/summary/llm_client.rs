@@ -1,5 +1,9 @@
+use crate::summary::{
+    CustomOpenAIConfig, CustomOpenAIReasoningEffort, CustomOpenAIVerbosity, CustomOpenAIWireApi,
+};
 use reqwest::{header, Client};
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use std::path::PathBuf;
 use std::time::Duration;
 use tokio_util::sync::CancellationToken;
@@ -7,43 +11,42 @@ use tracing::info;
 
 const REQUEST_TIMEOUT_DURATION: Duration = Duration::from_secs(300);
 
-// Generic structure for OpenAI-compatible API chat messages
 #[derive(Debug, Serialize)]
 pub struct ChatMessage {
     pub role: String,
     pub content: String,
 }
 
-// Generic structure for OpenAI-compatible API chat requests
 #[derive(Debug, Serialize)]
 pub struct ChatRequest {
     pub model: String,
     pub messages: Vec<ChatMessage>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub max_tokens: Option<u32>,
+}
+
+#[derive(Debug, Serialize)]
+struct ResponsesRequest {
+    model: String,
+    instructions: String,
+    input: String,
+    store: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub temperature: Option<f32>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub top_p: Option<f32>,
+    max_output_tokens: Option<u32>,
+    reasoning: ResponsesReasoning,
+    text: ResponsesText,
 }
 
-// Generic structure for OpenAI-compatible API chat responses
-#[derive(Deserialize, Debug)]
-pub struct ChatResponse {
-    pub choices: Vec<Choice>,
+#[derive(Debug, Serialize)]
+struct ResponsesReasoning {
+    effort: CustomOpenAIReasoningEffort,
 }
 
-#[derive(Deserialize, Debug)]
-pub struct Choice {
-    pub message: MessageContent,
+#[derive(Debug, Serialize)]
+struct ResponsesText {
+    verbosity: CustomOpenAIVerbosity,
 }
 
-#[derive(Deserialize, Debug)]
-pub struct MessageContent {
-    pub content: String,
-}
-
-// Claude-specific request structure
 #[derive(Debug, Serialize)]
 pub struct ClaudeRequest {
     pub model: String,
@@ -52,7 +55,6 @@ pub struct ClaudeRequest {
     pub messages: Vec<ChatMessage>,
 }
 
-// Claude-specific response structure
 #[derive(Deserialize, Debug)]
 pub struct ClaudeChatResponse {
     pub content: Vec<ClaudeChatContent>,
@@ -91,25 +93,92 @@ impl LLMProvider {
     }
 }
 
-/// Generates a summary using the specified LLM provider
-///
-/// # Arguments
-/// * `client` - Reqwest HTTP client (reused for performance)
-/// * `provider` - The LLM provider to use
-/// * `model_name` - The specific model to use (e.g., "gpt-4", "claude-3-opus")
-/// * `api_key` - API key for the provider (not needed for Ollama)
-/// * `system_prompt` - System instructions for the LLM
-/// * `user_prompt` - User query/content to process
-/// * `ollama_endpoint` - Optional custom Ollama endpoint (defaults to localhost:11434)
-/// * `custom_openai_endpoint` - Optional custom OpenAI-compatible endpoint
-/// * `max_tokens` - Optional max tokens (for CustomOpenAI provider)
-/// * `temperature` - Optional temperature (for CustomOpenAI provider)
-/// * `top_p` - Optional top_p (for CustomOpenAI provider)
-/// * `app_data_dir` - Optional app data directory (for BuiltInAI provider)
-/// * `cancellation_token` - Optional token to cancel the request
-///
-/// # Returns
-/// The generated summary text or an error message
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ResponseFormat {
+    ChatCompletions,
+    Responses,
+    Claude,
+}
+
+/// Builds an API URL from either a base URL or a URL already ending in a known API route.
+pub(crate) fn custom_openai_api_url(endpoint: &str, wire_api: CustomOpenAIWireApi) -> String {
+    let trimmed = endpoint.trim().trim_end_matches('/');
+    let base = trimmed
+        .strip_suffix("/chat/completions")
+        .or_else(|| trimmed.strip_suffix("/responses"))
+        .unwrap_or(trimmed)
+        .trim_end_matches('/');
+    format!("{base}/{}", wire_api.path())
+}
+
+/// Extracts all assistant text blocks from a raw Responses API JSON response.
+pub(crate) fn extract_responses_output_text(value: &Value) -> Option<String> {
+    if let Some(text) = value.get("output_text").and_then(Value::as_str) {
+        let text = text.trim();
+        if !text.is_empty() {
+            return Some(text.to_string());
+        }
+    }
+
+    let mut text_blocks = Vec::new();
+    for item in value.get("output")?.as_array()? {
+        if item.get("type").and_then(Value::as_str) != Some("message") {
+            continue;
+        }
+        let Some(content) = item.get("content").and_then(Value::as_array) else {
+            continue;
+        };
+        for part in content {
+            if part.get("type").and_then(Value::as_str) == Some("output_text") {
+                if let Some(text) = part.get("text").and_then(Value::as_str) {
+                    let text = text.trim();
+                    if !text.is_empty() {
+                        text_blocks.push(text);
+                    }
+                }
+            }
+        }
+    }
+
+    (!text_blocks.is_empty()).then(|| text_blocks.join("\n"))
+}
+
+fn extract_chat_output_text(value: &Value) -> Option<String> {
+    let content = value
+        .get("choices")?
+        .as_array()?
+        .first()?
+        .get("message")?
+        .get("content")?;
+
+    if let Some(text) = content.as_str() {
+        let text = text.trim();
+        return (!text.is_empty()).then(|| text.to_string());
+    }
+
+    let text_blocks = content
+        .as_array()?
+        .iter()
+        .filter_map(|part| part.get("text").and_then(Value::as_str))
+        .map(str::trim)
+        .filter(|text| !text.is_empty())
+        .collect::<Vec<_>>();
+    (!text_blocks.is_empty()).then(|| text_blocks.join("\n"))
+}
+
+fn response_excerpt(body: &str) -> String {
+    const MAX_CHARS: usize = 4_000;
+    let mut chars = body.chars();
+    let excerpt = chars.by_ref().take(MAX_CHARS).collect::<String>();
+    if chars.next().is_some() {
+        format!("{excerpt}…")
+    } else {
+        excerpt
+    }
+}
+
+/// Generates a summary using the specified LLM provider.
+#[allow(clippy::too_many_arguments)]
 pub async fn generate_summary(
     client: &Client,
     provider: &LLMProvider,
@@ -118,21 +187,16 @@ pub async fn generate_summary(
     system_prompt: &str,
     user_prompt: &str,
     ollama_endpoint: Option<&str>,
-    custom_openai_endpoint: Option<&str>,
-    max_tokens: Option<u32>,
-    temperature: Option<f32>,
-    top_p: Option<f32>,
+    custom_openai_config: Option<&CustomOpenAIConfig>,
     app_data_dir: Option<&PathBuf>,
     cancellation_token: Option<&CancellationToken>,
 ) -> Result<String, String> {
-    // Check if cancelled before starting
     if let Some(token) = cancellation_token {
         if token.is_cancelled() {
             return Err("Summary generation was cancelled".to_string());
         }
     }
 
-    // Handle BuiltInAI provider separately (uses local sidecar, no HTTP API)
     if provider == &LLMProvider::BuiltInAI {
         let app_data_dir = app_data_dir
             .ok_or_else(|| "app_data_dir is required for BuiltInAI provider".to_string())?;
@@ -148,34 +212,41 @@ pub async fn generate_summary(
         .map_err(|e| e.to_string());
     }
 
-    let (api_url, mut headers) = match provider {
+    let (api_url, mut headers, response_format) = match provider {
         LLMProvider::OpenAI => (
             "https://api.openai.com/v1/chat/completions".to_string(),
             header::HeaderMap::new(),
+            ResponseFormat::ChatCompletions,
         ),
         LLMProvider::Groq => (
             "https://api.groq.com/openai/v1/chat/completions".to_string(),
             header::HeaderMap::new(),
+            ResponseFormat::ChatCompletions,
         ),
         LLMProvider::OpenRouter => (
             "https://openrouter.ai/api/v1/chat/completions".to_string(),
             header::HeaderMap::new(),
+            ResponseFormat::ChatCompletions,
         ),
         LLMProvider::Ollama => {
-            let host = ollama_endpoint
-                .map(|s| s.to_string())
-                .unwrap_or_else(|| "http://localhost:11434".to_string());
+            let host = ollama_endpoint.unwrap_or("http://localhost:11434");
             (
-                format!("{}/v1/chat/completions", host),
+                format!("{}/v1/chat/completions", host.trim_end_matches('/')),
                 header::HeaderMap::new(),
+                ResponseFormat::ChatCompletions,
             )
         }
         LLMProvider::CustomOpenAI => {
-            let endpoint = custom_openai_endpoint
+            let config = custom_openai_config
                 .ok_or_else(|| "Custom OpenAI endpoint not configured".to_string())?;
+            let response_format = match config.wire_api {
+                CustomOpenAIWireApi::Responses => ResponseFormat::Responses,
+                CustomOpenAIWireApi::ChatCompletions => ResponseFormat::ChatCompletions,
+            };
             (
-                format!("{}/chat/completions", endpoint.trim_end_matches('/')),
+                custom_openai_api_url(&config.endpoint, config.wire_api),
                 header::HeaderMap::new(),
+                response_format,
             )
         }
         LLMProvider::Claude => {
@@ -192,16 +263,16 @@ pub async fn generate_summary(
                     .parse()
                     .map_err(|_| "Invalid anthropic version".to_string())?,
             );
-            ("https://api.anthropic.com/v1/messages".to_string(), header_map)
+            (
+                "https://api.anthropic.com/v1/messages".to_string(),
+                header_map,
+                ResponseFormat::Claude,
+            )
         }
-        LLMProvider::BuiltInAI => {
-            // This case is handled earlier with early returns
-            unreachable!("BuiltInAI is handled before this match statement")
-        }
+        LLMProvider::BuiltInAI => unreachable!("BuiltInAI is handled before this match"),
     };
 
-    // Add authorization header for non-Claude providers
-    if provider != &LLMProvider::Claude {
+    if provider != &LLMProvider::Claude && !api_key.trim().is_empty() {
         headers.insert(
             header::AUTHORIZATION,
             format!("Bearer {}", api_key)
@@ -216,46 +287,67 @@ pub async fn generate_summary(
             .map_err(|_| "Invalid content type".to_string())?,
     );
 
-    // Build request body based on provider
-    let request_body = if provider != &LLMProvider::Claude {
-        // For CustomOpenAI, apply optional parameters if provided
-        let (max_tokens_val, temperature_val, top_p_val) = if provider == &LLMProvider::CustomOpenAI {
-            (max_tokens, temperature, top_p)
-        } else {
-            (None, None, None)
-        };
-
-        serde_json::json!(ChatRequest {
-            model: model_name.to_string(),
-            messages: vec![
-                ChatMessage {
-                    role: "system".to_string(),
-                    content: system_prompt.to_string(),
+    let request_body = match response_format {
+        ResponseFormat::Responses => {
+            let config = custom_openai_config
+                .ok_or_else(|| "Custom OpenAI endpoint not configured".to_string())?;
+            serde_json::to_value(ResponsesRequest {
+                model: model_name.to_string(),
+                instructions: system_prompt.to_string(),
+                input: user_prompt.to_string(),
+                store: false,
+                max_output_tokens: config.max_tokens.and_then(|value| value.try_into().ok()),
+                reasoning: ResponsesReasoning {
+                    effort: config.reasoning_effort,
                 },
-                ChatMessage {
-                    role: "user".to_string(),
-                    content: user_prompt.to_string(),
-                }
-            ],
-            max_tokens: max_tokens_val,
-            temperature: temperature_val,
-            top_p: top_p_val,
-        })
-    } else {
-        serde_json::json!(ClaudeRequest {
+                text: ResponsesText {
+                    verbosity: config.verbosity,
+                },
+            })
+            .map_err(|e| format!("Failed to build Responses request: {e}"))?
+        }
+        ResponseFormat::ChatCompletions => {
+            let max_tokens = if provider == &LLMProvider::CustomOpenAI {
+                custom_openai_config
+                    .and_then(|config| config.max_tokens)
+                    .and_then(|value| value.try_into().ok())
+            } else {
+                None
+            };
+            serde_json::to_value(ChatRequest {
+                model: model_name.to_string(),
+                messages: vec![
+                    ChatMessage {
+                        role: "system".to_string(),
+                        content: system_prompt.to_string(),
+                    },
+                    ChatMessage {
+                        role: "user".to_string(),
+                        content: user_prompt.to_string(),
+                    },
+                ],
+                max_tokens,
+            })
+            .map_err(|e| format!("Failed to build Chat Completions request: {e}"))?
+        }
+        ResponseFormat::Claude => serde_json::to_value(ClaudeRequest {
             system: system_prompt.to_string(),
             model: model_name.to_string(),
             max_tokens: 2048,
             messages: vec![ChatMessage {
                 role: "user".to_string(),
                 content: user_prompt.to_string(),
-            }]
+            }],
         })
+        .map_err(|e| format!("Failed to build Claude request: {e}"))?,
     };
 
-    info!("🐞 LLM Request to {}: model={}", provider_name(provider), model_name);
+    info!(
+        "LLM request: provider={}, model={}",
+        provider_name(provider),
+        model_name
+    );
 
-    // Send request with timeout and cancellation support
     let request_future = client
         .post(api_url)
         .headers(headers)
@@ -263,15 +355,14 @@ pub async fn generate_summary(
         .timeout(REQUEST_TIMEOUT_DURATION)
         .send();
 
-    // Use tokio::select to race between cancellation and request completion
     let response = if let Some(token) = cancellation_token {
         tokio::select! {
             result = request_future => {
                 result.map_err(|e| {
                     if e.is_timeout() {
-                        format!("LLM request timed out after 60 seconds")
+                        format!("LLM request timed out after {} seconds", REQUEST_TIMEOUT_DURATION.as_secs())
                     } else {
-                        format!("Failed to send request to LLM: {}", e)
+                        format!("Failed to send request to LLM: {e}")
                     }
                 })?
             }
@@ -282,57 +373,59 @@ pub async fn generate_summary(
     } else {
         request_future.await.map_err(|e| {
             if e.is_timeout() {
-                format!("LLM request timed out after 60 seconds")
+                format!(
+                    "LLM request timed out after {} seconds",
+                    REQUEST_TIMEOUT_DURATION.as_secs()
+                )
             } else {
-                format!("Failed to send request to LLM: {}", e)
+                format!("Failed to send request to LLM: {e}")
             }
         })?
     };
 
-    if !response.status().is_success() {
-        let error_body = response
-            .text()
-            .await
-            .unwrap_or_else(|_| "Unknown error".to_string());
-        return Err(format!("LLM API request failed: {}", error_body));
+    let status = response.status();
+    let response_body = response
+        .text()
+        .await
+        .map_err(|e| format!("Failed to read LLM response: {e}"))?;
+
+    if !status.is_success() {
+        return Err(format!(
+            "LLM API request failed with status {}: {}",
+            status,
+            response_excerpt(&response_body)
+        ));
     }
 
-    // Parse response based on provider
-    if provider == &LLMProvider::Claude {
-        let chat_response = response
-            .json::<ClaudeChatResponse>()
-            .await
-            .map_err(|e| format!("Failed to parse LLM response: {}", e))?;
-
-        info!("🐞 LLM Response received from Claude");
-
-        let content = chat_response
-            .content
-            .get(0)
-            .ok_or("No content in LLM response")?
-            .text
-            .trim();
-        Ok(content.to_string())
-    } else {
-        let chat_response = response
-            .json::<ChatResponse>()
-            .await
-            .map_err(|e| format!("Failed to parse LLM response: {}", e))?;
-
-        info!("🐞 LLM Response received from {}", provider_name(provider));
-
-        let content = chat_response
-            .choices
-            .get(0)
-            .ok_or("No content in LLM response")?
-            .message
-            .content
-            .trim();
-        Ok(content.to_string())
+    match response_format {
+        ResponseFormat::Claude => {
+            let response: ClaudeChatResponse = serde_json::from_str(&response_body)
+                .map_err(|e| format!("Failed to parse Claude response: {e}"))?;
+            let content = response
+                .content
+                .first()
+                .ok_or("No content in Claude response")?
+                .text
+                .trim();
+            (!content.is_empty())
+                .then(|| content.to_string())
+                .ok_or_else(|| "No text content in Claude response".to_string())
+        }
+        ResponseFormat::Responses => {
+            let value: Value = serde_json::from_str(&response_body)
+                .map_err(|e| format!("Failed to parse Responses API response: {e}"))?;
+            extract_responses_output_text(&value)
+                .ok_or_else(|| "Responses API returned no output_text content".to_string())
+        }
+        ResponseFormat::ChatCompletions => {
+            let value: Value = serde_json::from_str(&response_body)
+                .map_err(|e| format!("Failed to parse Chat Completions response: {e}"))?;
+            extract_chat_output_text(&value)
+                .ok_or_else(|| "Chat Completions API returned no message.content".to_string())
+        }
     }
 }
 
-/// Helper function to get provider name for logging
 fn provider_name(provider: &LLMProvider) -> &str {
     match provider {
         LLMProvider::OpenAI => "OpenAI",
@@ -342,5 +435,92 @@ fn provider_name(provider: &LLMProvider) -> &str {
         LLMProvider::BuiltInAI => "Built-in AI",
         LLMProvider::OpenRouter => "OpenRouter",
         LLMProvider::CustomOpenAI => "Custom OpenAI",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn custom_api_url_appends_selected_route() {
+        assert_eq!(
+            custom_openai_api_url(
+                "https://example.test/codex/v1",
+                CustomOpenAIWireApi::Responses
+            ),
+            "https://example.test/codex/v1/responses"
+        );
+        assert_eq!(
+            custom_openai_api_url(
+                "https://example.test/v1/",
+                CustomOpenAIWireApi::ChatCompletions,
+            ),
+            "https://example.test/v1/chat/completions"
+        );
+    }
+
+    #[test]
+    fn custom_api_url_replaces_existing_known_route() {
+        assert_eq!(
+            custom_openai_api_url(
+                "https://example.test/v1/chat/completions",
+                CustomOpenAIWireApi::Responses,
+            ),
+            "https://example.test/v1/responses"
+        );
+        assert_eq!(
+            custom_openai_api_url(
+                "https://example.test/v1/responses/",
+                CustomOpenAIWireApi::Responses,
+            ),
+            "https://example.test/v1/responses"
+        );
+    }
+
+    #[test]
+    fn extracts_responses_message_output_text() {
+        let value = serde_json::json!({
+            "output": [
+                { "type": "reasoning", "summary": [] },
+                {
+                    "type": "message",
+                    "content": [
+                        { "type": "output_text", "text": "First" },
+                        { "type": "output_text", "text": "Second" }
+                    ]
+                }
+            ]
+        });
+
+        assert_eq!(
+            extract_responses_output_text(&value).as_deref(),
+            Some("First\nSecond")
+        );
+    }
+
+    #[test]
+    fn responses_request_disables_storage_and_uses_reasoning_controls() {
+        let value = serde_json::to_value(ResponsesRequest {
+            model: "gpt-test".to_string(),
+            instructions: "System".to_string(),
+            input: "User".to_string(),
+            store: false,
+            max_output_tokens: Some(512),
+            reasoning: ResponsesReasoning {
+                effort: CustomOpenAIReasoningEffort::High,
+            },
+            text: ResponsesText {
+                verbosity: CustomOpenAIVerbosity::High,
+            },
+        })
+        .unwrap();
+
+        assert_eq!(value["store"], false);
+        assert_eq!(value["reasoning"]["effort"], "high");
+        assert_eq!(value["text"]["verbosity"], "high");
+        assert_eq!(value["max_output_tokens"], 512);
+        assert!(value.get("temperature").is_none());
+        assert!(value.get("top_p").is_none());
     }
 }

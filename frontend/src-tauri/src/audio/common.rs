@@ -1,9 +1,13 @@
 use crate::api::TranscriptSegment;
+use crate::audio::transcription::{
+    FunAsrLocalProvider, OpenAiCompatibleProvider, TranscriptionEngine,
+};
 use anyhow::Result;
 use log::{debug, info};
 use once_cell::sync::Lazy;
 use std::path::Path;
 use std::sync::Arc;
+use tauri::{AppHandle, Manager, Runtime};
 use tokio::sync::{Mutex as AsyncMutex, OwnedMutexGuard};
 use uuid::Uuid;
 
@@ -14,10 +18,164 @@ pub(crate) async fn acquire_engine_lifecycle_lock() -> OwnedMutexGuard<()> {
     ENGINE_LIFECYCLE_LOCK.clone().lock_owned().await
 }
 
+/// Initialize the provider and model selected by an import or retranscription job.
+/// Endpoint credentials for external FunASR come from the saved transcription
+/// settings; batch dialogs never copy secrets into command arguments.
+pub(crate) async fn init_batch_transcription_engine<R: Runtime>(
+    app: &AppHandle<R>,
+    provider: Option<&str>,
+    model: Option<&str>,
+) -> Result<TranscriptionEngine> {
+    let saved_config =
+        crate::api::api::api_get_transcript_config(app.clone(), app.clone().state(), None)
+            .await
+            .map_err(anyhow::Error::msg)?
+            .unwrap_or(crate::api::api::TranscriptConfig {
+                provider: "parakeet".to_string(),
+                model: crate::config::DEFAULT_PARAKEET_MODEL.to_string(),
+                endpoint: None,
+                api_key: None,
+            });
+
+    let selected_provider = provider
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or(&saved_config.provider);
+    let selected_model = model
+        .filter(|value| !value.trim().is_empty())
+        .map(str::to_string)
+        .or_else(|| {
+            (selected_provider == saved_config.provider).then(|| saved_config.model.clone())
+        });
+
+    match selected_provider {
+        "localWhisper" | "whisper" => {
+            crate::whisper_engine::commands::whisper_init()
+                .await
+                .map_err(anyhow::Error::msg)?;
+            let engine = {
+                let guard = crate::whisper_engine::commands::WHISPER_ENGINE
+                    .lock()
+                    .unwrap_or_else(|error| error.into_inner());
+                guard.as_ref().cloned()
+            }
+            .ok_or_else(|| anyhow::anyhow!("Whisper engine failed to initialize"))?;
+            let target_model =
+                selected_model.unwrap_or_else(|| crate::config::DEFAULT_WHISPER_MODEL.to_string());
+            if engine.get_current_model().await.as_deref() != Some(target_model.as_str()) {
+                if let Err(error) = engine.discover_models().await {
+                    log::warn!("Whisper model discovery failed: {error}");
+                }
+                engine.load_model(&target_model).await.map_err(|error| {
+                    anyhow::anyhow!("Failed to load Whisper model '{target_model}': {error}")
+                })?;
+            }
+            Ok(TranscriptionEngine::Whisper(engine))
+        }
+        "parakeet" => {
+            crate::parakeet_engine::commands::parakeet_init()
+                .await
+                .map_err(anyhow::Error::msg)?;
+            let engine = {
+                let guard = crate::parakeet_engine::commands::PARAKEET_ENGINE
+                    .lock()
+                    .unwrap_or_else(|error| error.into_inner());
+                guard.as_ref().cloned()
+            }
+            .ok_or_else(|| anyhow::anyhow!("Parakeet engine failed to initialize"))?;
+            let target_model =
+                selected_model.unwrap_or_else(|| crate::config::DEFAULT_PARAKEET_MODEL.to_string());
+            if engine.get_current_model().await.as_deref() != Some(target_model.as_str()) {
+                if let Err(error) = engine.discover_models().await {
+                    log::warn!("Parakeet model discovery failed: {error}");
+                }
+                engine.load_model(&target_model).await.map_err(|error| {
+                    anyhow::anyhow!("Failed to load Parakeet model '{target_model}': {error}")
+                })?;
+            }
+            Ok(TranscriptionEngine::Parakeet(engine))
+        }
+        "qwen3Asr" => {
+            let target_model = selected_model
+                .ok_or_else(|| anyhow::anyhow!("Select a Qwen3-ASR model in Settings first"))?;
+            crate::audio::transcription::qwen3_asr_local_provider::validate_local_model_ready(
+                app,
+                &target_model,
+            )
+            .await
+            .map_err(anyhow::Error::msg)?;
+            let (endpoint, model_path) =
+                crate::audio::transcription::qwen3_asr_local_provider::ensure_service(
+                    app,
+                    &target_model,
+                )
+                .await
+                .map_err(anyhow::Error::msg)?;
+            let provider = OpenAiCompatibleProvider::new("Qwen3-ASR", endpoint, model_path, None)?;
+            Ok(TranscriptionEngine::Provider(Arc::new(provider)))
+        }
+        "funasrLocal" => {
+            crate::audio::transcription::funasr_local_provider::validate_local_model_ready(app)
+                .await
+                .map_err(anyhow::Error::msg)?;
+            Ok(TranscriptionEngine::Provider(Arc::new(
+                FunAsrLocalProvider::new(app).map_err(anyhow::Error::msg)?,
+            )))
+        }
+        "funasr" => {
+            if saved_config.provider != "funasr" {
+                return Err(anyhow::anyhow!(
+                    "Configure and save the external FunASR service in Settings first"
+                ));
+            }
+            let endpoint = saved_config
+                .endpoint
+                .ok_or_else(|| anyhow::anyhow!("The saved FunASR service URL is empty"))?;
+            let target_model = selected_model
+                .ok_or_else(|| anyhow::anyhow!("The saved FunASR model name is empty"))?;
+            let provider = OpenAiCompatibleProvider::new(
+                "FunASR",
+                endpoint,
+                target_model,
+                saved_config.api_key,
+            )?;
+            Ok(TranscriptionEngine::Provider(Arc::new(provider)))
+        }
+        other => Err(anyhow::anyhow!(
+            "Unsupported transcription provider for batch audio: {other}"
+        )),
+    }
+}
+
+pub(crate) async fn transcribe_batch_segment(
+    engine: &TranscriptionEngine,
+    samples: Vec<f32>,
+    language: Option<String>,
+) -> Result<(String, f32)> {
+    match engine {
+        TranscriptionEngine::Whisper(engine) => {
+            let (text, confidence, _) = engine
+                .transcribe_audio_with_confidence(samples, language)
+                .await?;
+            Ok((text, confidence))
+        }
+        TranscriptionEngine::Parakeet(engine) => {
+            let text = engine.transcribe_audio(samples).await?;
+            Ok((text, 0.9))
+        }
+        TranscriptionEngine::Provider(provider) => {
+            let result = provider.transcribe(samples, language).await?;
+            Ok((result.text, result.confidence.unwrap_or(0.9)))
+        }
+    }
+}
+
 /// Unload the transcription engine after a batch job (import or retranscription).
 /// Skips unloading if a live recording is currently in progress, since recording
-/// uses the same global engine instances.
-pub(crate) async fn unload_engine_after_batch(use_parakeet: bool) {
+/// may be using the same engine or managed service.
+pub(crate) async fn unload_engine_after_batch<R: Runtime>(
+    app: &AppHandle<R>,
+    provider: Option<&str>,
+) {
     let _engine_lifecycle_guard = acquire_engine_lifecycle_lock().await;
 
     if crate::audio::recording_commands::is_recording().await {
@@ -25,30 +183,56 @@ pub(crate) async fn unload_engine_after_batch(use_parakeet: bool) {
         return;
     }
 
-    if use_parakeet {
-        use crate::parakeet_engine::commands::PARAKEET_ENGINE;
-        let engine = {
-            let guard = PARAKEET_ENGINE.lock().unwrap_or_else(|e| e.into_inner());
-            guard.as_ref().cloned()
-        };
-        if let Some(e) = engine {
-            e.unload_model().await;
+    let resolved_provider = match provider.filter(|value| !value.trim().is_empty()) {
+        Some(provider) => provider.to_string(),
+        None => crate::api::api::api_get_transcript_config(app.clone(), app.clone().state(), None)
+            .await
+            .ok()
+            .flatten()
+            .map(|config| config.provider)
+            .unwrap_or_else(|| "parakeet".to_string()),
+    };
+
+    match resolved_provider.as_str() {
+        "parakeet" => {
+            let engine = {
+                let guard = crate::parakeet_engine::commands::PARAKEET_ENGINE
+                    .lock()
+                    .unwrap_or_else(|error| error.into_inner());
+                guard.as_ref().cloned()
+            };
+            if let Some(engine) = engine {
+                engine.unload_model().await;
+            }
         }
-    } else {
-        use crate::whisper_engine::commands::WHISPER_ENGINE;
-        let engine = {
-            let guard = WHISPER_ENGINE.lock().unwrap_or_else(|e| e.into_inner());
-            guard.as_ref().cloned()
-        };
-        if let Some(e) = engine {
-            e.unload_model().await;
+        "localWhisper" | "whisper" => {
+            let engine = {
+                let guard = crate::whisper_engine::commands::WHISPER_ENGINE
+                    .lock()
+                    .unwrap_or_else(|error| error.into_inner());
+                guard.as_ref().cloned()
+            };
+            if let Some(engine) = engine {
+                engine.unload_model().await;
+            }
         }
+        "qwen3Asr" => {
+            if let Err(error) =
+                crate::audio::transcription::qwen3_asr_local_provider::shutdown_managed_service()
+                    .await
+            {
+                log::warn!("Failed to stop MLX-Audio after batch transcription: {error}");
+            }
+        }
+        _ => {}
     }
 }
 
 /// Create transcript segments from transcription results.
 /// Each tuple is (text, start_ms, end_ms) from VAD timestamps.
-pub(crate) fn create_transcript_segments(transcripts: &[(String, f64, f64)]) -> Vec<TranscriptSegment> {
+pub(crate) fn create_transcript_segments(
+    transcripts: &[(String, f64, f64)],
+) -> Vec<TranscriptSegment> {
     transcripts
         .iter()
         .map(|(text, start_ms, end_ms)| {
@@ -126,8 +310,8 @@ pub(crate) fn split_segment_at_silence(
         return vec![segment.clone()];
     }
 
-    let ms_per_sample = (segment.end_timestamp_ms - segment.start_timestamp_ms)
-        / segment.samples.len() as f64;
+    let ms_per_sample =
+        (segment.end_timestamp_ms - segment.start_timestamp_ms) / segment.samples.len() as f64;
     let mut result = Vec::new();
     let mut pos = 0usize;
 

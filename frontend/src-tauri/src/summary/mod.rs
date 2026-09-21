@@ -6,8 +6,51 @@
 /// - Service layer for orchestrating summary generation
 /// - Templates for structured meeting summary generation
 /// - Tauri commands for frontend integration
-
 use serde::{Deserialize, Serialize};
+
+/// Wire protocol exposed by an OpenAI-compatible service.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "kebab-case")]
+pub enum CustomOpenAIWireApi {
+    /// OpenAI Responses API (`POST /responses`).
+    #[default]
+    Responses,
+    /// Legacy Chat Completions API (`POST /chat/completions`).
+    ChatCompletions,
+}
+
+impl CustomOpenAIWireApi {
+    pub fn path(self) -> &'static str {
+        match self {
+            Self::Responses => "responses",
+            Self::ChatCompletions => "chat/completions",
+        }
+    }
+}
+
+/// Reasoning effort accepted by Responses-compatible reasoning models.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum CustomOpenAIReasoningEffort {
+    None,
+    Minimal,
+    Low,
+    Medium,
+    #[default]
+    High,
+    Xhigh,
+    Max,
+}
+
+/// Output detail level accepted by the Responses API.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum CustomOpenAIVerbosity {
+    Low,
+    Medium,
+    #[default]
+    High,
+}
 
 /// Custom OpenAI-compatible endpoint configuration
 /// Stored as JSON in the database and used for connecting to any OpenAI-compatible API server
@@ -23,11 +66,37 @@ pub struct CustomOpenAIConfig {
     /// Maximum tokens for completion (optional)
     #[serde(rename = "maxTokens")]
     pub max_tokens: Option<i32>,
-    /// Temperature parameter (0.0-2.0, optional)
-    pub temperature: Option<f32>,
-    /// Top-P sampling parameter (0.0-1.0, optional)
-    #[serde(rename = "topP")]
-    pub top_p: Option<f32>,
+    /// API request/response format. Missing values from older saved configs migrate to Responses.
+    #[serde(rename = "wireApi", default)]
+    pub wire_api: CustomOpenAIWireApi,
+    /// Reasoning effort sent to Responses-compatible models.
+    #[serde(rename = "reasoningEffort", default)]
+    pub reasoning_effort: CustomOpenAIReasoningEffort,
+    /// Output detail level sent to Responses-compatible models.
+    #[serde(default)]
+    pub verbosity: CustomOpenAIVerbosity,
+}
+
+#[cfg(test)]
+mod custom_openai_config_tests {
+    use super::*;
+
+    #[test]
+    fn legacy_config_defaults_to_responses_controls() {
+        let config: CustomOpenAIConfig = serde_json::from_value(serde_json::json!({
+            "endpoint": "https://example.test/v1",
+            "apiKey": null,
+            "model": "gpt-test",
+            "maxTokens": 2048,
+            "temperature": 0.2,
+            "topP": 0.9
+        }))
+        .unwrap();
+
+        assert_eq!(config.wire_api, CustomOpenAIWireApi::Responses);
+        assert_eq!(config.reasoning_effort, CustomOpenAIReasoningEffort::High);
+        assert_eq!(config.verbosity, CustomOpenAIVerbosity::High);
+    }
 }
 
 pub mod commands;
@@ -39,6 +108,7 @@ pub mod service;
 pub mod summary_engine;
 pub mod template_commands;
 pub mod templates;
+pub mod transcript_polish;
 
 // Re-export Tauri commands (with their generated __cmd__ variants)
 pub use commands::{
@@ -49,8 +119,8 @@ pub use commands::{
     __cmd__api_save_meeting_summary_language, __tauri_command_name_api_cancel_summary,
     __tauri_command_name_api_detect_transcript_summary_language,
     __tauri_command_name_api_get_meeting_detected_summary_language,
-    __tauri_command_name_api_get_meeting_summary_language,
-    __tauri_command_name_api_get_summary, __tauri_command_name_api_process_transcript,
+    __tauri_command_name_api_get_meeting_summary_language, __tauri_command_name_api_get_summary,
+    __tauri_command_name_api_process_transcript,
     __tauri_command_name_api_save_meeting_detected_summary_language,
     __tauri_command_name_api_save_meeting_summary,
     __tauri_command_name_api_save_meeting_summary_language, api_cancel_summary,
@@ -64,14 +134,14 @@ pub use commands::{
 pub use template_commands::{
     __cmd__api_get_template_details, __cmd__api_list_templates, __cmd__api_validate_template,
     __tauri_command_name_api_get_template_details, __tauri_command_name_api_list_templates,
-    __tauri_command_name_api_validate_template,
-    api_get_template_details, api_list_templates, api_validate_template,
+    __tauri_command_name_api_validate_template, api_get_template_details, api_list_templates,
+    api_validate_template,
 };
 
 // Re-export commonly used items
 pub use llm_client::LLMProvider;
 pub use processor::{
     chunk_text, clean_llm_markdown_output, extract_meeting_name_from_markdown,
-    generate_meeting_summary, rough_token_count,
+    generate_meeting_summary, rough_token_count, SummaryDetailLevel,
 };
 pub use service::SummaryService;

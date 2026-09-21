@@ -55,8 +55,9 @@ export function useModelConfiguration({ serverAddress }: UseModelConfigurationPr
                 data.customOpenAIModel = customConfig.model || null;
                 data.customOpenAIApiKey = customConfig.apiKey || null;
                 data.maxTokens = customConfig.maxTokens || null;
-                data.temperature = customConfig.temperature || null;
-                data.topP = customConfig.topP || null;
+                data.customOpenAIWireApi = customConfig.wireApi || 'responses';
+                data.reasoningEffort = customConfig.reasoningEffort || 'high';
+                data.verbosity = customConfig.verbosity || 'high';
                 // For custom-openai, model field should match customOpenAIModel
                 data.model = customConfig.model || data.model;
                 console.log('✅ Loaded custom OpenAI config:', {

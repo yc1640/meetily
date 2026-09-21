@@ -6,9 +6,10 @@ import { listen } from '@tauri-apps/api/event';
 import { Button } from '@/components/ui/button';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { cn } from '@/lib/utils';
-import { Download, RefreshCw, BadgeAlert, Trash2 } from 'lucide-react';
+import { Download, RefreshCw, BadgeAlert, Trash2, Link2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { formatSummaryModelSizeLabelFromMb } from '@/lib/onboarding-summary-model';
+import { useAppLanguage } from '@/contexts/AppLanguageContext';
 
 interface ModelInfo {
   name: string;
@@ -21,6 +22,7 @@ interface ModelInfo {
   context_size: number;
   description: string;
   gguf_file: string;
+  is_external?: boolean;
 }
 
 interface DownloadProgressInfo {
@@ -40,6 +42,7 @@ export function BuiltInModelManager({
   onModelSelect,
   layout = 'inline',
 }: BuiltInModelManagerProps) {
+  const { t } = useAppLanguage();
   const [models, setModels] = useState<ModelInfo[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [hasFetched, setHasFetched] = useState<boolean>(false);
@@ -62,7 +65,7 @@ export function BuiltInModelManager({
       }
     } catch (error) {
       console.error('Failed to fetch built-in AI models:', error);
-      toast.error('Failed to load models');
+      toast.error(t('modelsLoadFailed'));
     } finally {
       setIsLoading(false);
       setHasFetched(true);
@@ -127,7 +130,7 @@ export function BuiltInModelManager({
           });
           // Refresh models list
           fetchModels();
-          toast.success(`Model ${model} downloaded successfully`);
+          toast.success(t('modelDownloadComplete'), { description: model });
         }
 
         // Handle cancelled status
@@ -216,7 +219,7 @@ export function BuiltInModelManager({
       }
 
       // For real errors, show toast and remove from downloading
-      toast.error(`Failed to download ${modelName}`);
+      toast.error(t('modelsLoadFailed'), { description: modelName });
 
       setDownloadingModels((prev) => {
         const newSet = new Set(prev);
@@ -232,7 +235,7 @@ export function BuiltInModelManager({
   const cancelDownload = async (modelName: string) => {
     try {
       await invoke('builtin_ai_cancel_download', { modelName });
-      toast.info(`Download of ${modelName} cancelled`);
+      toast.info(t('cancelDownload'), { description: modelName });
       setDownloadingModels((prev) => {
         const newSet = new Set(prev);
         newSet.delete(modelName);
@@ -246,11 +249,35 @@ export function BuiltInModelManager({
   const deleteModel = async (modelName: string) => {
     try {
       await invoke('builtin_ai_delete_model', { modelName });
-      toast.success(`Model ${modelName} deleted`);
+      toast.success(t('modelRemoved'), { description: modelName });
       fetchModels();
     } catch (error) {
       console.error('Failed to delete model:', error);
-      toast.error(`Failed to delete ${modelName}`);
+      toast.error(t('modelError'), { description: modelName });
+    }
+  };
+
+  const addExistingModel = async () => {
+    try {
+      const modelName = await invoke<string | null>('builtin_ai_add_existing_model');
+      if (!modelName) return;
+      await fetchModels();
+      onModelSelect(modelName);
+      toast.success(t('existingModelAdded'), { description: modelName });
+    } catch (error) {
+      toast.error(t('existingModelAddFailed'), {
+        description: error instanceof Error ? error.message : String(error),
+      });
+    }
+  };
+
+  const getModelDescription = (model: ModelInfo) => {
+    switch (model.name) {
+      case 'qwen3.5:2b': return t('qwen35TwoBDescription');
+      case 'qwen3.5:4b': return t('qwen35FourBDescription');
+      case 'gemma3:4b': return t('gemma3FourBDescription');
+      case 'gemma3:1b': return t('gemma3OneBDescription');
+      default: return model.description;
     }
   };
 
@@ -259,7 +286,7 @@ export function BuiltInModelManager({
     return (
       <div className="text-center py-8 text-muted-foreground">
         <RefreshCw className="mx-auto h-8 w-8 animate-spin mb-2" />
-        Loading models...
+        {t('loadingModels')}
       </div>
     );
   }
@@ -269,7 +296,7 @@ export function BuiltInModelManager({
     return (
       <Alert>
         <AlertDescription>
-          No models found. Download a model to get started with Built-in AI.
+          {t('noModelsFound')}
         </AlertDescription>
       </Alert>
     );
@@ -277,8 +304,15 @@ export function BuiltInModelManager({
 
   return (
     <div>
-      <div className="flex items-center justify-between mb-4">
-        <h4 className="text-sm font-bold">Built-in AI Models</h4>
+      <div className="mb-4 flex items-start justify-between gap-4">
+        <div>
+          <h4 className="text-sm font-bold">{t('builtInAiModels')}</h4>
+          <p className="mt-1 max-w-xl text-xs leading-5 text-gray-600">{t('addExistingSummaryModelDescription')}</p>
+        </div>
+        <Button type="button" variant="outline" size="sm" className="shrink-0" onClick={() => void addExistingModel()}>
+          <Link2 className="mr-2 h-4 w-4" aria-hidden="true" />
+          {t('addExistingModel')}
+        </Button>
       </div>
 
       <div
@@ -324,11 +358,11 @@ export function BuiltInModelManager({
                       <>
                         <span className="flex shrink-0 items-center gap-1 text-xs font-medium text-green-600">
                           <span className="h-2 w-2 rounded-full bg-green-600"></span>
-                          Ready
+                          {t('ready')}
                         </span>
                         {selectedModel === model.name && (
                           <span className="shrink-0 rounded bg-blue-100 px-2 py-0.5 text-xs font-medium text-blue-700">
-                            Selected
+                            {t('selected')}
                           </span>
                         )}
                       </>
@@ -336,12 +370,12 @@ export function BuiltInModelManager({
                     {isCorrupted && (
                       <span className="flex shrink-0 items-center gap-1 rounded bg-red-100 px-2 py-0.5 text-xs font-medium text-red-700">
                         <BadgeAlert className="h-3 w-3" />
-                        Corrupted
+                        {t('corrupted')}
                       </span>
                     )}
                     {isError && (
                       <span className="shrink-0 rounded bg-red-100 px-2 py-0.5 text-xs font-medium text-red-700">
-                        Error
+                        {t('modelError')}
                       </span>
                     )}
                   </div>
@@ -359,7 +393,7 @@ export function BuiltInModelManager({
                       }}
                     >
                       <Download className="mr-2 h-4 w-4" />
-                      Download
+                      {t('download')}
                     </Button>
                   )}
                   {/* Downloading - Show Cancel button */}
@@ -373,7 +407,7 @@ export function BuiltInModelManager({
                         cancelDownload(model.name);
                       }}
                     >
-                      Cancel
+                      {t('cancel')}
                     </Button>
                   )}
                   {/* Error - Show Retry button */}
@@ -388,7 +422,7 @@ export function BuiltInModelManager({
                       }}
                     >
                       <RefreshCw className="mr-2 h-4 w-4" />
-                      Retry
+                      {t('retry')}
                     </Button>
                   )}
                   {/* Corrupted - Show both Retry and Delete buttons */}
@@ -403,7 +437,7 @@ export function BuiltInModelManager({
                         }}
                       >
                         <RefreshCw className="mr-2 h-4 w-4" />
-                        Retry
+                        {t('retry')}
                       </Button>
                       <Button
                         variant="outline"
@@ -414,7 +448,7 @@ export function BuiltInModelManager({
                         }}
                       >
                         <Trash2 className="mr-2 h-4 w-4" />
-                        Delete
+                        {t('delete')}
                       </Button>
                     </>
                   )}
@@ -426,7 +460,7 @@ export function BuiltInModelManager({
                         e.stopPropagation();
                         deleteModel(model.name);
                       }}
-                      title="Delete model"
+                      title={t('deleteModelTip')}
                     >
                       <Trash2 className="h-4 w-4" />
                     </button>
@@ -434,20 +468,21 @@ export function BuiltInModelManager({
                 </div>
               </div>
               <div className="text-sm text-gray-600">
-                {model.description && (
-                  <p className="mb-1">{model.description}</p>
+                {getModelDescription(model) && (
+                  <p className="mb-1">{getModelDescription(model)}</p>
                 )}
                 {(isError || isCorrupted) && (
                   <p className="mb-1 text-xs text-red-600">
                     {isError && typeof model.status === 'object' && 'Error' in model.status
                       ? (model.status as any).Error
                       : isCorrupted
-                      ? 'File is corrupted. Retry download or delete.'
-                      : 'An error occurred'}
+                      ? t('fileCorruptedHelp')
+                      : t('modelError')}
                   </p>
                 )}
                 <div className="text-xs text-gray-500">
-                  <span>{formatSummaryModelSizeLabelFromMb(model.size_mb)} • {model.context_size} tokens</span>
+                  <span>{formatSummaryModelSizeLabelFromMb(model.size_mb)} • {model.context_size} {t('tokens')}</span>
+                  {model.is_external && <span className="ml-2">• {t('externalModel')}</span>}
                 </div>
                 </div>
               </div>
@@ -456,7 +491,7 @@ export function BuiltInModelManager({
               {modelIsDownloading && progress !== undefined && (
                 <div className="mt-3 pt-3 border-t border-gray-200">
                   <div className="flex items-center justify-between mb-1">
-                    <span className="text-sm font-medium text-gray-900">Downloading...</span>
+                    <span className="text-sm font-medium text-gray-900">{t('downloading')}</span>
                     <span className="text-sm font-semibold text-gray-900">
                       {Math.round(progress)}%
                     </span>

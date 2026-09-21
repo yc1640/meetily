@@ -37,6 +37,7 @@ import { useRouter } from 'next/navigation';
 import { useSidebar } from '../Sidebar/SidebarProvider';
 import { LANGUAGES } from '@/constants/languages';
 import { useTranscriptionModels, ModelOption } from '@/hooks/useTranscriptionModels';
+import { useAppLanguage } from '@/contexts/AppLanguageContext';
 
 
 interface ImportAudioDialogProps {
@@ -73,6 +74,11 @@ export function ImportAudioDialog({
   const router = useRouter();
   const { refetchMeetings } = useSidebar();
   const { selectedLanguage, transcriptModelConfig } = useConfig();
+  const { appLanguage, t } = useAppLanguage();
+  const displayNames = useMemo(
+    () => new Intl.DisplayNames([appLanguage], { type: 'language' }),
+    [appLanguage],
+  );
 
   const [title, setTitle] = useState('');
   const [selectedLang, setSelectedLang] = useState(selectedLanguage || 'auto');
@@ -95,18 +101,18 @@ export function ImportAudioDialog({
   } = useTranscriptionModels(transcriptModelConfig);
 
   const handleImportComplete = useCallback((result: ImportResult) => {
-    toast.success(`Import complete! ${result.segments_count} segments created.`);
+    toast.success(`${t('importCompleteSegments')}：${result.segments_count}`);
 
     // Refresh meetings list then navigate to the imported meeting
     refetchMeetings();
     onComplete?.();
     onOpenChange(false);
     router.push(`/meeting-details?id=${result.meeting_id}`);
-  }, [router, refetchMeetings, onComplete, onOpenChange]);
+  }, [router, refetchMeetings, onComplete, onOpenChange, t]);
 
   const handleImportError = useCallback((error: string) => {
-    toast.error('Import failed', { description: error });
-  }, []);
+    toast.error(t('importFailed'), { description: error });
+  }, [t]);
 
   const {
     status,
@@ -170,12 +176,31 @@ export function ImportAudioDialog({
     return availableModels.find((m) => m.provider === provider && m.name === name);
   }, [selectedModelKey, availableModels]);
   const isParakeetModel = selectedModel?.provider === 'parakeet';
+  const isFunAsrLocalModel = selectedModel?.provider === 'funasrLocal';
+  const isQwen3AsrModel = selectedModel?.provider === 'qwen3Asr';
+  const keepsOriginalLanguage =
+    isFunAsrLocalModel || isQwen3AsrModel || selectedModel?.provider === 'funasr';
+  const availableLanguages = useMemo(() => {
+    if (isParakeetModel || isFunAsrLocalModel) {
+      return LANGUAGES.filter((language) => language.code === 'auto');
+    }
+    if (isQwen3AsrModel) {
+      const supported = new Set(['auto', 'zh', 'yue', 'en', 'de', 'es', 'fr', 'it', 'pt', 'ru', 'ko', 'ja']);
+      return LANGUAGES.filter((language) => supported.has(language.code));
+    }
+    if (keepsOriginalLanguage) {
+      return LANGUAGES.filter((language) => language.code !== 'auto-translate');
+    }
+    return LANGUAGES;
+  }, [isFunAsrLocalModel, isParakeetModel, isQwen3AsrModel, keepsOriginalLanguage]);
 
   useEffect(() => {
-    if (isParakeetModel && selectedLang !== 'auto') {
+    if ((isParakeetModel || isFunAsrLocalModel) && selectedLang !== 'auto') {
+      setSelectedLang('auto');
+    } else if (keepsOriginalLanguage && selectedLang === 'auto-translate') {
       setSelectedLang('auto');
     }
-  }, [isParakeetModel, selectedLang]);
+  }, [isFunAsrLocalModel, isParakeetModel, keepsOriginalLanguage, selectedLang]);
 
   const handleSelectFile = async () => {
     const info = await selectFile();
@@ -190,7 +215,7 @@ export function ImportAudioDialog({
     await startImport(
       fileInfo.path,
       title || fileInfo.filename,
-      isParakeetModel ? null : selectedLang === 'auto' ? null : selectedLang,
+      isParakeetModel || isFunAsrLocalModel || selectedLang === 'auto' ? null : selectedLang,
       selectedModel?.name || null,
       selectedModel?.provider || null
     );
@@ -199,7 +224,7 @@ export function ImportAudioDialog({
   const handleCancel = async () => {
     if (isProcessing) {
       await cancelImport();
-      toast.info('Import cancelled');
+      toast.info(t('importCancelled'));
     }
     onOpenChange(false);
   };
@@ -236,31 +261,31 @@ export function ImportAudioDialog({
             {isProcessing ? (
               <>
                 <Loader2 className="h-5 w-5 animate-spin text-blue-600" />
-                Importing Audio...
+                {t('importingAudio')}
               </>
             ) : error ? (
               <>
                 <AlertCircle className="h-5 w-5 text-red-600" />
-                Import Failed
+                {t('importFailed')}
               </>
             ) : status === 'complete' ? (
               <>
                 <CheckCircle2 className="h-5 w-5 text-green-600" />
-                Import Complete
+                {t('importComplete')}
               </>
             ) : (
               <>
                 <Upload className="h-5 w-5 text-blue-600" />
-                Import Audio File
+                {t('importAudioFile')}
               </>
             )}
           </DialogTitle>
           <DialogDescription>
             {isProcessing
-              ? progress?.message || 'Processing audio...'
+              ? progress?.message || t('processingAudio')
               : error
-              ? 'An error occurred during import'
-              : 'Import an audio file to create a new meeting with transcripts'}
+              ? t('importErrorDescription')
+              : t('importAudioDescription')}
           </DialogDescription>
         </DialogHeader>
 
@@ -290,19 +315,19 @@ export function ImportAudioDialog({
 
                   {/* Editable title */}
                   <div className="space-y-1">
-                    <label className="text-sm font-medium text-gray-700">Meeting Title</label>
+                    <label className="text-sm font-medium text-gray-700">{t('meetingTitle')}</label>
                     <Input
                       value={title}
                       onChange={(e) => {
                         setTitle(e.target.value);
                         setTitleModifiedByUser(true);
                       }}
-                      placeholder="Enter meeting title"
+                      placeholder={t('enterMeetingTitle')}
                     />
                   </div>
 
                   <Button variant="outline" size="sm" onClick={handleSelectFile} className="w-full">
-                    Choose Different File
+                    {t('chooseDifferentFile')}
                   </Button>
                 </div>
               ) : (
@@ -312,12 +337,12 @@ export function ImportAudioDialog({
                     {status === 'validating' ? (
                       <>
                         <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                        Validating...
+                        {t('validating')}
                       </>
                     ) : (
                       <>
                         <Upload className="h-4 w-4 mr-2" />
-                        Select Audio File
+                        {t('selectAudioFile')}
                       </>
                     )}
                   </Button>
@@ -332,7 +357,7 @@ export function ImportAudioDialog({
                     onClick={() => setShowAdvanced(!showAdvanced)}
                     className="w-full flex items-center justify-between p-3 text-sm font-medium text-gray-700 hover:bg-gray-50"
                   >
-                    <span>Advanced Options</span>
+                    <span>{t('advancedOptions')}</span>
                     {showAdvanced ? (
                       <ChevronUp className="h-4 w-4" />
                     ) : (
@@ -343,20 +368,24 @@ export function ImportAudioDialog({
                   {showAdvanced && (
                     <div className="p-3 pt-0 space-y-4 border-t">
                       {/* Language selector */}
-                      {!isParakeetModel ? (
+                      {!isParakeetModel && !isFunAsrLocalModel ? (
                         <div className="space-y-2">
                           <div className="flex items-center gap-2">
                             <Globe className="h-4 w-4 text-muted-foreground" />
-                            <span className="text-sm font-medium">Language</span>
+                            <span className="text-sm font-medium">{t('language')}</span>
                           </div>
                           <Select value={selectedLang} onValueChange={setSelectedLang}>
                             <SelectTrigger className="w-full">
-                              <SelectValue placeholder="Select language" />
+                              <SelectValue placeholder={t('selectLanguage')} />
                             </SelectTrigger>
                             <SelectContent className="max-h-60">
-                              {LANGUAGES.map((lang) => (
+                              {availableLanguages.map((lang) => (
                                 <SelectItem key={lang.code} value={lang.code}>
-                                  {lang.name}
+                                  {lang.code === 'auto'
+                                    ? t('automatic')
+                                    : lang.code === 'auto-translate'
+                                      ? t('autoTranslateEnglish')
+                                      : displayNames.of(lang.code) || lang.name}
                                 </SelectItem>
                               ))}
                             </SelectContent>
@@ -366,10 +395,12 @@ export function ImportAudioDialog({
                         <div className="space-y-2">
                           <div className="flex items-center gap-2">
                             <Globe className="h-4 w-4 text-muted-foreground" />
-                            <span className="text-sm font-medium">Language</span>
+                            <span className="text-sm font-medium">{t('language')}</span>
                           </div>
                           <p className="text-xs text-muted-foreground">
-                            Language selection isn't supported for Parakeet. It always uses automatic detection.
+                            {isFunAsrLocalModel
+                              ? t('funasrLocalLanguageDescription')
+                              : t('parakeetAutoLanguage')}
                           </p>
                         </div>
                       )}
@@ -379,7 +410,7 @@ export function ImportAudioDialog({
                         <div className="space-y-2">
                           <div className="flex items-center gap-2">
                             <Cpu className="h-4 w-4 text-muted-foreground" />
-                            <span className="text-sm font-medium">Model</span>
+                            <span className="text-sm font-medium">{t('model')}</span>
                           </div>
                           <Select
                             value={selectedModelKey}
@@ -387,7 +418,7 @@ export function ImportAudioDialog({
                             disabled={loadingModels}
                           >
                             <SelectTrigger className="w-full">
-                              <SelectValue placeholder={loadingModels ? 'Loading models...' : 'Select model'} />
+                              <SelectValue placeholder={loadingModels ? t('loadingModels') : t('selectModel')} />
                             </SelectTrigger>
                             <SelectContent>
                               {availableModels.map((model) => (
@@ -395,7 +426,8 @@ export function ImportAudioDialog({
                                   key={`${model.provider}:${model.name}`}
                                   value={`${model.provider}:${model.name}`}
                                 >
-                                  {model.displayName} ({Math.round(model.size_mb)} MB)
+                                  {model.displayName}
+                                  {model.size_mb !== undefined && ` (${Math.round(model.size_mb)} MB)`}
                                 </SelectItem>
                               ))}
                             </SelectContent>
@@ -440,7 +472,7 @@ export function ImportAudioDialog({
           {!isProcessing && !error && (
             <>
               <Button variant="outline" onClick={() => onOpenChange(false)}>
-                Cancel
+                {t('cancel')}
               </Button>
               <Button
                 onClick={handleStartImport}
@@ -448,23 +480,23 @@ export function ImportAudioDialog({
                 disabled={!fileInfo}
               >
                 <Upload className="h-4 w-4 mr-2" />
-                Import
+                {t('import')}
               </Button>
             </>
           )}
           {isProcessing && (
             <Button variant="outline" onClick={handleCancel}>
               <X className="h-4 w-4 mr-2" />
-              Cancel
+              {t('cancel')}
             </Button>
           )}
           {error && (
             <>
               <Button variant="outline" onClick={() => onOpenChange(false)}>
-                Close
+                {t('close')}
               </Button>
               <Button onClick={reset} variant="outline">
-                Try Again
+                {t('tryAgain')}
               </Button>
             </>
           )}

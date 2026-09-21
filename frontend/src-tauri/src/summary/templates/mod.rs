@@ -16,7 +16,7 @@
 //! use app_lib::summary::templates;
 //!
 //! // Load a specific template
-//! let template = templates::get_template("daily_standup").expect("daily standup template exists");
+//! let template = templates::get_template("standard_meeting").expect("standard meeting template exists");
 //!
 //! // Generate markdown structure
 //! let markdown = template.to_markdown_structure();
@@ -43,8 +43,9 @@ mod types;
 
 // Re-export public API
 pub use loader::{
-    get_template, list_template_ids, list_templates, set_bundled_templates_dir,
-    validate_and_parse_template,
+    delete_custom_template, get_default_template, get_template, is_custom_template,
+    is_default_template, list_template_ids, list_templates, save_custom_template,
+    set_bundled_templates_dir, validate_and_parse_template,
 };
 pub use types::{Template, TemplateSection};
 
