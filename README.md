@@ -1,3 +1,10 @@
+<p align="center">
+    <a href="README.md">English</a> | <a href="README.zh-CN.md">简体中文</a>
+</p>
+
+> [!IMPORTANT]
+> This repository is a community-maintained fork of Meetily with a Chinese-first interface and additional local AI workflows. It adds optional recording-only mode, managed Qwen3-ASR and FunASR integrations, reusable local models, transcript polishing, segment retranscription, configurable summary templates, and OpenAI Responses API support. See the [Chinese introduction](README.zh-CN.md) or the [complete customization notes](docs/CUSTOM_CHANGES_ZH.md). Upstream Meetily is maintained by [Zackriya Solutions](https://github.com/Zackriya-Solutions/meeting-minutes).
+
 <div align="center" style="border-bottom: none">
     <h1>
         <img src="docs/Meetily-6.png" style="border-radius: 10px;" />
@@ -52,6 +59,7 @@ A privacy-first AI meeting assistant that captures, transcribes, and summarizes 
 <summary>Table of Contents</summary>
 
 - [Introduction](#introduction)
+- [What This Fork Adds](#what-this-fork-adds)
 - [Why Meetily?](#why-meetily)
 - [Features](#features)
 - [Installation](#installation)
@@ -67,6 +75,22 @@ A privacy-first AI meeting assistant that captures, transcribes, and summarizes 
 ## Introduction
 
 Meetily is a privacy-first AI meeting assistant that runs entirely on your local machine. It captures your meetings, transcribes them in real-time, and generates summaries, all without sending any data to the cloud. This makes it the perfect solution for professionals and enterprises who need to maintain complete control over their sensitive information.
+
+## What This Fork Adds
+
+This fork keeps Meetily's local-first foundation while improving Chinese workflows and model flexibility:
+
+- Simplified Chinese and English interfaces, with Simplified Chinese as the default.
+- Independent recording and live-transcription switches, including recording-only mode.
+- Correct source-language transcription by default; Whisper translation to English remains an explicit option.
+- Managed Qwen3-ASR through MLX-Audio and local FunASR/SenseVoice support on Apple Silicon Macs.
+- Shared model selection across live recording, audio import, full retranscription, and segment retranscription.
+- Reuse of compatible model directories already downloaded by other applications.
+- AI transcript polishing that preserves the original transcript as a separate version.
+- Editable summary templates, concise/standard/detailed output levels, and Markdown table rendering.
+- Custom summary endpoints using either the OpenAI Responses API or Chat Completions API.
+
+Local Qwen3-ASR and local FunASR/SenseVoice currently require an Apple Silicon Mac. Using an external transcription or summary provider sends the relevant audio or text to that configured provider. For implementation details and current limitations, see [Complete Customization Notes (Chinese)](docs/CUSTOM_CHANGES_ZH.md).
 
 ## Why Meetily?
 
