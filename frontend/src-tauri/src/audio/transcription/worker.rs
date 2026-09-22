@@ -23,6 +23,12 @@ pub fn reset_speech_detected_flag() {
     info!("🔍 SPEECH_DETECTED_EMITTED reset to: {}", SPEECH_DETECTED_EMITTED.load(Ordering::SeqCst));
 }
 
+/// Preserve every non-empty ASR result. Confidence values are useful metadata,
+/// but are not comparable enough across providers to safely discard speech.
+fn should_emit_transcript(text: &str) -> bool {
+    !text.trim().is_empty()
+}
+
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct TranscriptUpdate {
     pub text: String,
@@ -152,24 +158,15 @@ pub fn start_transcription_task<R: Runtime>(
                             .await
                             {
                                 Ok((transcript, confidence_opt, is_partial)) => {
-                                    // Provider-aware confidence threshold
-                                    let confidence_threshold = match &engine_clone {
-                                        TranscriptionEngine::Whisper(_) | TranscriptionEngine::Provider(_) => 0.3,
-                                        TranscriptionEngine::Parakeet(_) => 0.0, // Parakeet has no confidence, accept all
-                                    };
-
                                     let confidence_str = match confidence_opt {
                                         Some(c) => format!("{:.2}", c),
                                         None => "N/A".to_string(),
                                     };
 
-                                    info!("🔍 Worker {} transcription result: text='{}', confidence={}, partial={}, threshold={:.2}",
-                                          worker_id, transcript, confidence_str, is_partial, confidence_threshold);
+                                    info!("🔍 Worker {} transcription result: text='{}', confidence={}, partial={}",
+                                          worker_id, transcript, confidence_str, is_partial);
 
-                                    // Check confidence threshold (or accept if no confidence provided)
-                                    let meets_threshold = confidence_opt.map_or(true, |c| c >= confidence_threshold);
-
-                                    if !transcript.trim().is_empty() && meets_threshold {
+                                    if should_emit_transcript(&transcript) {
                                         // PERFORMANCE: Only log transcription results, not every processing step
                                         info!("✅ Worker {} transcribed: {} (confidence: {}, partial: {})",
                                               worker_id, transcript, confidence_str, is_partial);
@@ -593,4 +590,21 @@ fn format_recording_time(seconds: f64) -> String {
     let secs = total_seconds % 60;
 
     format!("[{:02}:{:02}]", minutes, secs)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::should_emit_transcript;
+
+    #[test]
+    fn preserves_short_non_empty_transcripts() {
+        assert!(should_emit_transcript("Yes"));
+        assert!(should_emit_transcript("好"));
+    }
+
+    #[test]
+    fn rejects_empty_transcripts() {
+        assert!(!should_emit_transcript(""));
+        assert!(!should_emit_transcript("  \n"));
+    }
 }

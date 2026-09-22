@@ -4,6 +4,10 @@ use log::{debug, info, warn};
 use std::collections::VecDeque;
 use std::time::Duration;
 
+/// Silero operates at 16 kHz; timestamps and sample positions in this module
+/// are expressed in that post-resampling rate.
+const VAD_SAMPLE_RATE: u32 = 16000;
+
 /// Represents a complete speech segment detected by VAD
 #[derive(Debug, Clone)]
 pub struct SpeechSegment {
@@ -30,9 +34,6 @@ pub struct ContinuousVadProcessor {
 
 impl ContinuousVadProcessor {
     pub fn new(input_sample_rate: u32, redemption_time_ms: u32) -> Result<Self> {
-        // Silero VAD MUST use 16kHz - this is hardcoded requirement
-        const VAD_SAMPLE_RATE: u32 = 16000;
-
         // Use STRICT settings to prevent silence from reaching Whisper
         let mut config = VadConfig::default();
         config.sample_rate = VAD_SAMPLE_RATE as usize;
@@ -165,6 +166,9 @@ impl ContinuousVadProcessor {
               self.in_speech, self.current_speech.len(), self.buffer.len(), self.speech_segments.len());
 
         let mut completed_segments = Vec::new();
+        // Padding the final VAD frame must not extend the transcript timestamp
+        // or payload beyond the real audio supplied by the caller.
+        let real_end_sample = self.processed_samples + self.buffer.len();
 
         // Process any remaining buffered audio
         if !self.buffer.is_empty() {
@@ -182,15 +186,34 @@ impl ContinuousVadProcessor {
 
         // Force end any ongoing speech
         if self.in_speech && !self.current_speech.is_empty() {
-            // processed_samples and speech_start_sample always count 16kHz samples (post-resampling)
-            let start_ms = (self.speech_start_sample as f64 / 16000.0) * 1000.0;
-            let end_ms = (self.processed_samples as f64 / 16000.0) * 1000.0;
+            let real_sample_count = real_end_sample
+                .checked_sub(self.speech_start_sample)
+                .filter(|count| *count > 0)
+                .ok_or_else(|| {
+                    anyhow!(
+                        "VAD flush invariant violated: active interval [{}, {}) is empty or reversed",
+                        self.speech_start_sample,
+                        real_end_sample
+                    )
+                })?;
+            let active_speech = self.session.get_current_speech();
+            if active_speech.len() < real_sample_count {
+                return Err(anyhow!(
+                    "VAD flush invariant violated: active buffer has {} samples, interval requires {}",
+                    active_speech.len(),
+                    real_sample_count
+                ));
+            }
+            let samples = active_speech[..real_sample_count].to_vec();
+            let start_ms =
+                (self.speech_start_sample as f64 / VAD_SAMPLE_RATE as f64) * 1000.0;
+            let end_ms = (real_end_sample as f64 / VAD_SAMPLE_RATE as f64) * 1000.0;
 
             debug!("VAD flush: Force-ending speech - start={}ms, end={}ms, duration={}ms, samples={}",
-                  start_ms, end_ms, end_ms - start_ms, self.current_speech.len());
+                  start_ms, end_ms, end_ms - start_ms, samples.len());
 
             let segment = SpeechSegment {
-                samples: self.current_speech.clone(),
+                samples,
                 start_timestamp_ms: start_ms,
                 end_timestamp_ms: end_ms,
                 confidence: 0.8, // Estimated confidence for forced end
@@ -236,8 +259,10 @@ impl ContinuousVadProcessor {
                         self.last_logged_state = true;
                     }
                     self.in_speech = true;
-                    // Use 16000 (VAD processing rate) since processed_samples counts 16kHz samples
-                    self.speech_start_sample = self.processed_samples + (timestamp_ms * 16000 / 1000);
+                    // Silero reports a session-absolute timestamp. Adding our
+                    // processed count again would double the final segment offset.
+                    self.speech_start_sample =
+                        timestamp_ms * VAD_SAMPLE_RATE as usize / 1000;
                     self.current_speech.clear();
                 }
                 VadTransition::SpeechEnd { start_timestamp_ms, end_timestamp_ms, samples } => {
@@ -591,5 +616,32 @@ mod tests {
             assert!(duration_ms >= 200.0, "Segment {} too short: {:.0}ms", i, duration_ms);
         }
     }
-}
 
+    #[test]
+    fn test_flush_timestamp_and_payload_end_at_real_audio_boundary() {
+        let silence_samples = 20 * VAD_SAMPLE_RATE as usize;
+        let mut audio = vec![0.0; silence_samples];
+        audio.extend(generate_test_audio_with_speech(3.0, VAD_SAMPLE_RATE));
+        let audio_duration_ms =
+            audio.len() as f64 / VAD_SAMPLE_RATE as f64 * 1000.0;
+
+        let mut processor =
+            ContinuousVadProcessor::new(VAD_SAMPLE_RATE, 2000).unwrap();
+        assert!(processor.process_audio(&audio).unwrap().is_empty());
+        assert!(processor.in_speech);
+        assert!(processor.speech_start_sample <= processor.processed_samples);
+
+        let flushed = processor.flush().unwrap();
+        assert_eq!(flushed.len(), 1);
+        let segment = &flushed[0];
+        assert!(segment.end_timestamp_ms <= audio_duration_ms);
+        assert!(segment.end_timestamp_ms >= segment.start_timestamp_ms);
+
+        let timestamp_samples = (((segment.end_timestamp_ms
+            - segment.start_timestamp_ms)
+            / 1000.0)
+            * VAD_SAMPLE_RATE as f64)
+            .round() as usize;
+        assert_eq!(timestamp_samples, segment.samples.len());
+    }
+}

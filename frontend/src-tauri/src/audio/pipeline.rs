@@ -783,7 +783,9 @@ impl AudioPipeline {
         // Recording-only sessions must not construct or run the VAD/transcription path.
         // This avoids model-adjacent CPU work when users only want an audio recording.
         let vad_processor = if transcription_sender.is_some() {
-            let redemption_time = 400;
+            // Live transcription balances natural pauses against latency. Batch
+            // import/retranscription deliberately keep their longer 2000ms policy.
+            let redemption_time = 500;
             Some(
                 ContinuousVadProcessor::new(sample_rate, redemption_time)
                     .map_err(|error| anyhow::anyhow!("Failed to create VAD processor: {error}"))?,

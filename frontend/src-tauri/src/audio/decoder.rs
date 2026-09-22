@@ -26,6 +26,14 @@ const FFMPEG_ONLY_EXTENSIONS: &[&str] = &["mkv", "webm", "wma"];
 /// Returns current progress (0-100) and a message
 pub type ProgressCallback = Box<dyn Fn(u32, &str) + Send>;
 
+fn decoded_sample_rate(metadata_rate: u32, decoder_rate: u32) -> u32 {
+    if decoder_rate == 0 {
+        metadata_rate
+    } else {
+        decoder_rate
+    }
+}
+
 /// Decoded audio data from a file
 #[derive(Debug, Clone)]
 pub struct DecodedAudio {
@@ -454,7 +462,7 @@ pub fn decode_audio_file_with_progress(
     let track_id = track.id;
 
     // Get audio parameters
-    let sample_rate = track
+    let mut sample_rate = track
         .codec_params
         .sample_rate
         .ok_or_else(|| anyhow!("Unknown sample rate"))?;
@@ -524,6 +532,18 @@ pub fn decode_audio_file_with_progress(
                         );
                         channels = actual_channels;
                     }
+                    // Some containers report a different rate from the samples
+                    // produced by the decoder. HE-AAC is the common case: Symphonia
+                    // decodes the AAC-LC core at half the advertised SBR rate. Use
+                    // the decoded rate so duration and resampling remain correct.
+                    let actual_rate = decoded_sample_rate(sample_rate, spec.rate);
+                    if actual_rate != sample_rate {
+                        info!(
+                            "Sample rate corrected: metadata={} actual={} (using actual)",
+                            sample_rate, actual_rate
+                        );
+                        sample_rate = actual_rate;
+                    }
                     sample_buf = Some(SampleBuffer::<f32>::new(duration, spec));
                 }
 
@@ -580,6 +600,12 @@ pub fn decode_audio_file_with_progress(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn decoder_rate_overrides_incorrect_container_metadata() {
+        assert_eq!(decoded_sample_rate(48_000, 24_000), 24_000);
+        assert_eq!(decoded_sample_rate(48_000, 0), 48_000);
+    }
 
     #[test]
     fn test_to_whisper_format_mono_16k() {

@@ -62,7 +62,14 @@ pub struct ClaudeChatResponse {
 
 #[derive(Deserialize, Debug)]
 pub struct ClaudeChatContent {
-    pub text: String,
+    // Thinking-enabled Claude responses can contain non-text blocks first.
+    pub text: Option<String>,
+}
+
+impl ClaudeChatResponse {
+    fn first_text(&self) -> Option<&str> {
+        self.content.iter().find_map(|block| block.text.as_deref())
+    }
 }
 
 /// LLM Provider enumeration for multi-provider support
@@ -333,7 +340,8 @@ pub async fn generate_summary(
         ResponseFormat::Claude => serde_json::to_value(ClaudeRequest {
             system: system_prompt.to_string(),
             model: model_name.to_string(),
-            max_tokens: 2048,
+            // Claude's thinking tokens share this budget with the visible answer.
+            max_tokens: 8192,
             messages: vec![ChatMessage {
                 role: "user".to_string(),
                 content: user_prompt.to_string(),
@@ -402,10 +410,8 @@ pub async fn generate_summary(
             let response: ClaudeChatResponse = serde_json::from_str(&response_body)
                 .map_err(|e| format!("Failed to parse Claude response: {e}"))?;
             let content = response
-                .content
-                .first()
-                .ok_or("No content in Claude response")?
-                .text
+                .first_text()
+                .ok_or("No text content in Claude response")?
                 .trim();
             (!content.is_empty())
                 .then(|| content.to_string())
@@ -441,6 +447,29 @@ fn provider_name(provider: &LLMProvider) -> &str {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn claude_response_skips_thinking_blocks() {
+        let response: ClaudeChatResponse = serde_json::from_value(serde_json::json!({
+            "content": [
+                {"type": "thinking", "thinking": "internal"},
+                {"type": "text", "text": "Meeting summary."}
+            ]
+        }))
+        .unwrap();
+
+        assert_eq!(response.first_text(), Some("Meeting summary."));
+    }
+
+    #[test]
+    fn claude_response_without_text_is_rejected() {
+        let response: ClaudeChatResponse = serde_json::from_value(serde_json::json!({
+            "content": [{"type": "thinking", "thinking": "internal"}]
+        }))
+        .unwrap();
+
+        assert_eq!(response.first_text(), None);
+    }
 
     #[test]
     fn custom_api_url_appends_selected_route() {
