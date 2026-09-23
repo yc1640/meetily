@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Switch } from '@/components/ui/switch';
-import { FolderOpen } from 'lucide-react';
+import { FolderOpen, MonitorUp } from 'lucide-react';
 import { invoke } from '@tauri-apps/api/core';
 import { DeviceSelection, SelectedDevices } from '@/components/DeviceSelection';
 import Analytics from '@/lib/analytics';
@@ -12,6 +12,7 @@ export interface RecordingPreferences {
   save_folder: string;
   auto_save: boolean;
   transcription_enabled: boolean;
+  screen_recording_enabled: boolean;
   file_format: string;
   preferred_mic_device: string | null;
   preferred_system_device: string | null;
@@ -28,6 +29,7 @@ export function RecordingSettings({ onSave }: RecordingSettingsProps) {
     save_folder: '',
     auto_save: true,
     transcription_enabled: true,
+    screen_recording_enabled: false,
     file_format: 'mp4',
     preferred_mic_device: null,
     preferred_system_device: null
@@ -35,6 +37,13 @@ export function RecordingSettings({ onSave }: RecordingSettingsProps) {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [showRecordingNotification, setShowRecordingNotification] = useState(true);
+  const [isMac, setIsMac] = useState(false);
+
+  useEffect(() => {
+    import('@tauri-apps/plugin-os')
+      .then(({ platform }) => setIsMac(platform() === 'macos'))
+      .catch(() => setIsMac(false));
+  }, []);
 
   // Load recording preferences on component mount
   useEffect(() => {
@@ -98,6 +107,13 @@ export function RecordingSettings({ onSave }: RecordingSettingsProps) {
     setPreferences(newPreferences);
     await savePreferences(newPreferences);
     await Analytics.track('live_transcription_toggled', { enabled: enabled.toString() });
+  };
+
+  const handleScreenRecordingToggle = async (enabled: boolean) => {
+    const newPreferences = { ...preferences, screen_recording_enabled: enabled };
+    setPreferences(newPreferences);
+    await savePreferences(newPreferences);
+    await Analytics.track('screen_recording_toggled', { enabled: enabled.toString() });
   };
 
   const handleDeviceChange = async (devices: SelectedDevices) => {
@@ -198,6 +214,24 @@ export function RecordingSettings({ onSave }: RecordingSettingsProps) {
         />
       </div>
 
+      {isMac && (
+        <div className="flex items-center justify-between p-4 border rounded-lg">
+          <div className="flex min-w-0 flex-1 items-start gap-3 pr-6">
+            <MonitorUp className="mt-0.5 h-5 w-5 shrink-0 text-gray-500" aria-hidden="true" />
+            <div>
+              <div className="font-medium">{t('recordScreen')}</div>
+              <div className="text-sm text-gray-600">{t('recordScreenDescription')}</div>
+            </div>
+          </div>
+          <Switch
+            checked={preferences.screen_recording_enabled}
+            onCheckedChange={handleScreenRecordingToggle}
+            disabled={saving || isRecording}
+            aria-label={t('recordScreen')}
+          />
+        </div>
+      )}
+
       <div className="flex items-center justify-between p-4 border rounded-lg">
         <div className="flex-1 min-w-0 pr-6">
           <div className="font-medium">{t('liveTranscription')}</div>
@@ -222,8 +256,8 @@ export function RecordingSettings({ onSave }: RecordingSettingsProps) {
         </div>
       )}
 
-      {/* Folder Location - Only shown when auto_save is enabled */}
-      {preferences.auto_save && (
+      {/* Screen video uses the same meeting folder even when audio saving is off. */}
+      {(preferences.auto_save || (isMac && preferences.screen_recording_enabled)) && (
         <div className="space-y-4">
           <div className="p-4 border rounded-lg bg-gray-50">
             <div className="font-medium mb-2">{t('saveLocation')}</div>

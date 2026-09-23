@@ -35,6 +35,8 @@ pub struct MeetingMetadata {
     pub duration_seconds: Option<f64>,
     pub devices: DeviceInfo,
     pub audio_file: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub screen_file: Option<String>,
     pub transcript_file: String,
     pub sample_rate: u32,
     pub status: String,  // "recording", "completed", "error"
@@ -256,6 +258,7 @@ impl RecordingSaver {
                 system_audio: None,
             },
             audio_file: if create_checkpoints { "audio.mp4".to_string() } else { "".to_string() },
+            screen_file: None,
             transcript_file: "transcripts.json".to_string(),
             sample_rate: 48000,
             status: "recording".to_string(),
@@ -280,6 +283,20 @@ impl RecordingSaver {
         std::fs::rename(&temp_path, &metadata_path)?;  // Atomic
 
         Ok(())
+    }
+
+    /// Record the optional screen capture beside the existing audio artifact.
+    pub fn set_screen_file(&mut self, file_name: Option<String>) {
+        if let Some(ref mut metadata) = self.metadata {
+            metadata.screen_file = file_name;
+
+            if let Some(folder) = &self.meeting_folder {
+                let metadata_clone = metadata.clone();
+                if let Err(e) = self.write_metadata(folder, &metadata_clone) {
+                    warn!("Failed to update metadata with screen recording: {}", e);
+                }
+            }
+        }
     }
 
     /// Write transcripts.json to disk (atomic write with temp file and validation)

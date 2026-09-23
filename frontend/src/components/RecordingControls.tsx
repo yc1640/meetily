@@ -11,6 +11,7 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/comp
 import Analytics from '@/lib/analytics';
 import { useRecordingState } from '@/contexts/RecordingStateContext';
 import { useAppLanguage } from '@/contexts/AppLanguageContext';
+import { toast } from 'sonner';
 
 interface RecordingControlsProps {
   isRecording: boolean;
@@ -310,6 +311,15 @@ export const RecordingControls: React.FC<RecordingControlsProps> = ({
           } */
         });
 
+        // Screen capture is optional. Surface failures without changing audio or
+        // transcription state, which continue independently.
+        const screenRecordingErrorUnsubscribe = await listen<string>('screen-recording-error', (event) => {
+          console.warn('Optional screen recording error:', event.payload);
+          toast.warning(t('screenRecordingUnavailable'), {
+            description: t('screenRecordingUnavailableDescription')
+          });
+        });
+
         // Pause/Resume events are now handled by RecordingStateContext
         // No need for duplicate listeners here
 
@@ -322,6 +332,7 @@ export const RecordingControls: React.FC<RecordingControlsProps> = ({
         unsubscribes = [
           transcriptErrorUnsubscribe,
           transcriptionErrorUnsubscribe,
+          screenRecordingErrorUnsubscribe,
           speechDetectedUnsubscribe
         ];
         console.log('Recording event listeners set up successfully');
@@ -340,7 +351,7 @@ export const RecordingControls: React.FC<RecordingControlsProps> = ({
         }
       });
     };
-  }, [onRecordingStop, onTranscriptionError]);
+  }, [onRecordingStop, onTranscriptionError, t]);
 
   return (
     <TooltipProvider>

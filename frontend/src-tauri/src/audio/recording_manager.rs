@@ -488,6 +488,12 @@ impl RecordingManager {
         self.recording_saver.set_meeting_name(name);
     }
 
+    /// Store the screen recording artifact in meeting metadata without coupling it
+    /// to the audio pipeline.
+    pub fn set_screen_file(&mut self, file_name: Option<String>) {
+        self.recording_saver.set_screen_file(file_name);
+    }
+
     /// Add a structured transcript segment to be saved later
     pub fn add_transcript_segment(&self, segment: super::recording_saver::TranscriptSegment) {
         self.recording_saver.add_transcript_segment(segment);

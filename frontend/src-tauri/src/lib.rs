@@ -50,6 +50,7 @@ pub mod onboarding;
 pub mod openai;
 pub mod openrouter;
 pub mod parakeet_engine;
+pub mod screen_recording;
 pub mod state;
 pub mod summary;
 pub mod tray;
@@ -810,6 +811,12 @@ pub fn run() {
                         // Stop the app-managed MLX-Audio server and release its model memory.
                         if let Err(e) = audio::transcription::qwen3_asr_local_provider::shutdown_managed_service().await {
                             log::error!("Failed to stop managed MLX-Audio service: {}", e);
+                        }
+
+                        // Finalize a screen recording even when the app exits before the user
+                        // explicitly stops the meeting. This is independent from audio cleanup.
+                        if let Err(e) = screen_recording::stop().await {
+                            log::warn!("Failed to finalize screen recording during exit: {}", e);
                         }
                     });
                     log::info!("Application cleanup complete");

@@ -17,6 +17,8 @@ pub struct RecordingPreferences {
     pub auto_save: bool,
     #[serde(default = "default_transcription_enabled")]
     pub transcription_enabled: bool,
+    #[serde(default)]
+    pub screen_recording_enabled: bool,
     pub file_format: String,
     #[serde(default)]
     pub preferred_mic_device: Option<String>,
@@ -33,6 +35,7 @@ impl Default for RecordingPreferences {
             save_folder: get_default_recordings_folder(),
             auto_save: true,
             transcription_enabled: true,
+            screen_recording_enabled: false,
             file_format: "mp4".to_string(),
             preferred_mic_device: None,
             preferred_system_device: None,

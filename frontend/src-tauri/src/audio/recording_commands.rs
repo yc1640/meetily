@@ -35,6 +35,7 @@ pub use super::transcription::TranscriptUpdate;
 // Simple recording state tracking
 static IS_RECORDING: AtomicBool = AtomicBool::new(false);
 static LIVE_TRANSCRIPTION_ENABLED: AtomicBool = AtomicBool::new(false);
+static SCREEN_RECORDING_ALLOWED: AtomicBool = AtomicBool::new(false);
 
 // Global recording manager and transcription task to keep them alive during recording
 static RECORDING_MANAGER: Mutex<Option<RecordingManager>> = Mutex::new(None);
@@ -83,6 +84,110 @@ async fn validate_transcription_if_enabled<R: Runtime>(
     Ok(())
 }
 
+fn start_optional_screen_recording<R: Runtime>(app: AppHandle<R>, enabled: bool) {
+    SCREEN_RECORDING_ALLOWED.store(enabled, Ordering::SeqCst);
+    if !enabled {
+        return;
+    }
+
+    let meeting_folder = RECORDING_MANAGER.lock().ok().and_then(|manager| {
+        manager
+            .as_ref()
+            .and_then(RecordingManager::get_meeting_folder)
+    });
+    let Some(meeting_folder) = meeting_folder else {
+        warn!("Screen recording was enabled, but the meeting folder is unavailable");
+        let _ = app.emit(
+            "screen-recording-error",
+            "The meeting folder is unavailable.",
+        );
+        return;
+    };
+    let output_path = meeting_folder.join("screen.mp4");
+
+    tauri::async_runtime::spawn(async move {
+        match crate::screen_recording::start(output_path.clone()).await {
+            Ok(path) => {
+                let is_current_meeting = SCREEN_RECORDING_ALLOWED.load(Ordering::SeqCst)
+                    && RECORDING_MANAGER
+                        .lock()
+                        .ok()
+                        .and_then(|manager| {
+                            manager
+                                .as_ref()
+                                .and_then(RecordingManager::get_meeting_folder)
+                        })
+                        .is_some_and(|folder| folder == meeting_folder);
+
+                if !is_current_meeting {
+                    // The user stopped the meeting while macOS was granting access.
+                    let _ = crate::screen_recording::stop().await;
+                    return;
+                }
+
+                if let Ok(mut manager) = RECORDING_MANAGER.lock() {
+                    if let Some(manager) = manager.as_mut() {
+                        manager.set_screen_file(Some("screen.mp4".to_string()));
+                    }
+                }
+                let _ = app.emit(
+                    "screen-recording-started",
+                    serde_json::json!({ "path": path.to_string_lossy() }),
+                );
+                info!("✅ Optional screen recording started");
+            }
+            Err(error) => {
+                warn!("Optional screen recording did not start: {}", error);
+                let _ = app.emit("screen-recording-error", error);
+            }
+        }
+    });
+}
+
+async fn stop_optional_screen_recording<R: Runtime>(app: &AppHandle<R>) {
+    SCREEN_RECORDING_ALLOWED.store(false, Ordering::SeqCst);
+
+    match tokio::time::timeout(
+        tokio::time::Duration::from_secs(15),
+        crate::screen_recording::stop(),
+    )
+    .await
+    {
+        Ok(Ok(Some(path))) => {
+            let _ = app.emit(
+                "screen-recording-stopped",
+                serde_json::json!({ "path": path.to_string_lossy() }),
+            );
+            info!("✅ Optional screen recording finalized");
+        }
+        Ok(Ok(None)) => {}
+        Ok(Err(error)) => {
+            if let Ok(mut manager) = RECORDING_MANAGER.lock() {
+                if let Some(manager) = manager.as_mut() {
+                    manager.set_screen_file(None);
+                }
+            }
+            warn!(
+                "Optional screen recording could not be finalized: {}",
+                error
+            );
+            let _ = app.emit("screen-recording-error", error);
+        }
+        Err(_) => {
+            if let Ok(mut manager) = RECORDING_MANAGER.lock() {
+                if let Some(manager) = manager.as_mut() {
+                    manager.set_screen_file(None);
+                }
+            }
+            warn!("Timed out while finalizing optional screen recording");
+            let _ = app.emit(
+                "screen-recording-error",
+                "Screen recording finalization timed out.",
+            );
+        }
+    }
+}
+
 // ============================================================================
 // RECORDING COMMANDS
 // ============================================================================
@@ -118,26 +223,32 @@ pub async fn start_recording_with_meeting_name<R: Runtime>(
     let mut manager = RecordingManager::new();
 
     // Load recording preferences to get auto_save AND device preferences
-    let (auto_save, transcription_enabled, preferred_mic_name, preferred_system_name) =
-        match super::recording_preferences::load_recording_preferences(&app).await {
-            Ok(prefs) => {
-                info!("📋 Loaded recording preferences: auto_save={}, transcription_enabled={}, preferred_mic={:?}, preferred_system={:?}",
+    let (
+        auto_save,
+        transcription_enabled,
+        screen_recording_enabled,
+        preferred_mic_name,
+        preferred_system_name,
+    ) = match super::recording_preferences::load_recording_preferences(&app).await {
+        Ok(prefs) => {
+            info!("📋 Loaded recording preferences: auto_save={}, transcription_enabled={}, preferred_mic={:?}, preferred_system={:?}",
                       prefs.auto_save, prefs.transcription_enabled, prefs.preferred_mic_device, prefs.preferred_system_device);
-                (
-                    prefs.auto_save,
-                    prefs.transcription_enabled,
-                    prefs.preferred_mic_device,
-                    prefs.preferred_system_device,
-                )
-            }
-            Err(e) => {
-                warn!(
-                    "Failed to load recording preferences, using defaults: {}",
-                    e
-                );
-                (true, true, None, None)
-            }
-        };
+            (
+                prefs.auto_save,
+                prefs.transcription_enabled,
+                prefs.screen_recording_enabled,
+                prefs.preferred_mic_device,
+                prefs.preferred_system_device,
+            )
+        }
+        Err(e) => {
+            warn!(
+                "Failed to load recording preferences, using defaults: {}",
+                e
+            );
+            (true, true, false, None, None)
+        }
+    };
 
     super::recording_preferences::validate_recording_mode(auto_save, transcription_enabled)
         .map_err(str::to_string)?;
@@ -327,6 +438,8 @@ pub async fn start_recording_with_meeting_name<R: Runtime>(
         info!("🎙️ Recording started in recording-only mode");
     }
 
+    start_optional_screen_recording(app.clone(), screen_recording_enabled);
+
     // Emit success event
     app.emit(
         "recording-started",
@@ -401,21 +514,25 @@ pub async fn start_recording_with_devices_and_meeting<R: Runtime>(
     let mut manager = RecordingManager::new();
 
     // Load recording preferences before validating a model so recording-only mode can start immediately.
-    let (auto_save, transcription_enabled) =
+    let (auto_save, transcription_enabled, screen_recording_enabled) =
         match super::recording_preferences::load_recording_preferences(&app).await {
             Ok(prefs) => {
                 info!(
                     "📋 Loaded recording preferences: auto_save={}, transcription_enabled={}",
                     prefs.auto_save, prefs.transcription_enabled
                 );
-                (prefs.auto_save, prefs.transcription_enabled)
+                (
+                    prefs.auto_save,
+                    prefs.transcription_enabled,
+                    prefs.screen_recording_enabled,
+                )
             }
             Err(e) => {
                 warn!(
                     "Failed to load recording preferences, defaulting to auto_save=true: {}",
                     e
                 );
-                (true, true) // Default to saving and transcription if preferences can't be loaded
+                (true, true, false) // Default to saving and transcription if preferences can't be loaded
             }
         };
 
@@ -499,6 +616,8 @@ pub async fn start_recording_with_devices_and_meeting<R: Runtime>(
         info!("🎙️ Recording started in recording-only mode");
     }
 
+    start_optional_screen_recording(app.clone(), screen_recording_enabled);
+
     // Emit success event
     app.emit(
         "recording-started",
@@ -536,6 +655,10 @@ pub async fn stop_recording<R: Runtime>(
         info!("Recording was not active");
         return Ok(());
     }
+
+    // Screen video is independent and best-effort: finalize it first, but never
+    // fail or delay the existing audio/transcription shutdown indefinitely.
+    stop_optional_screen_recording(&app).await;
 
     let live_transcription_enabled = LIVE_TRANSCRIPTION_ENABLED.swap(false, Ordering::SeqCst);
 
