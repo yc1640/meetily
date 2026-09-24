@@ -10,6 +10,11 @@ use std::sync::{
     atomic::{AtomicBool, Ordering},
     Arc, Mutex,
 };
+use std::{
+    path::{Path, PathBuf},
+    process::{Command, Stdio},
+    time::Instant,
+};
 use tauri::{AppHandle, Emitter, Manager, Runtime};
 use tokio::task::JoinHandle;
 
@@ -186,6 +191,119 @@ async fn stop_optional_screen_recording<R: Runtime>(app: &AppHandle<R>) {
             );
         }
     }
+}
+
+/// Mux the separately captured screen and audio files into a playable video.
+///
+/// The original files are intentionally retained. Packaging is best-effort and
+/// must never make stopping a recording fail.
+async fn package_screen_recording(meeting_folder: PathBuf) -> Result<Option<PathBuf>, String> {
+    tokio::task::spawn_blocking(move || package_screen_recording_blocking(&meeting_folder))
+        .await
+        .map_err(|error| format!("Screen recording packaging task failed: {}", error))?
+}
+
+fn package_screen_recording_blocking(meeting_folder: &Path) -> Result<Option<PathBuf>, String> {
+    let screen_path = meeting_folder.join("screen.mp4");
+    let audio_path = meeting_folder.join("audio.mp4");
+    if !screen_path.is_file() || !audio_path.is_file() {
+        info!(
+            "Skipping screen recording packaging because source files are missing (screen={}, audio={})",
+            screen_path.exists(),
+            audio_path.exists()
+        );
+        return Ok(None);
+    }
+
+    let ffmpeg_path = crate::audio::ffmpeg::find_ffmpeg_path().ok_or_else(|| {
+        "FFmpeg was not found; keeping separate screen and audio files".to_string()
+    })?;
+    let output_path = meeting_folder.join("meeting.mp4");
+    let temporary_path = meeting_folder.join(".meeting.mp4.partial");
+    if temporary_path.exists() {
+        std::fs::remove_file(&temporary_path)
+            .map_err(|error| format!("Failed to remove stale packaging file: {}", error))?;
+    }
+
+    let mut command = Command::new(ffmpeg_path);
+    command
+        .args([
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-y",
+            "-i",
+            screen_path.to_string_lossy().as_ref(),
+            "-i",
+            audio_path.to_string_lossy().as_ref(),
+            "-map",
+            "0:v:0",
+            "-map",
+            "1:a:0",
+            "-c:v",
+            "copy",
+            "-c:a",
+            "copy",
+            "-shortest",
+            "-movflags",
+            "+faststart",
+            "-f",
+            "mp4",
+            temporary_path.to_string_lossy().as_ref(),
+        ])
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped());
+
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x08000000;
+        command.creation_flags(CREATE_NO_WINDOW);
+    }
+
+    let mut process = command
+        .spawn()
+        .map_err(|error| format!("Failed to start FFmpeg packaging: {}", error))?;
+    let deadline = Instant::now() + std::time::Duration::from_secs(120);
+    loop {
+        match process.try_wait() {
+            Ok(Some(status)) => {
+                let output = process
+                    .wait_with_output()
+                    .map_err(|error| format!("Failed to collect FFmpeg output: {}", error))?;
+                if !status.success() {
+                    let stderr = String::from_utf8_lossy(&output.stderr);
+                    let _ = std::fs::remove_file(&temporary_path);
+                    return Err(format!("FFmpeg packaging failed: {}", stderr.trim()));
+                }
+                break;
+            }
+            Ok(None) if Instant::now() >= deadline => {
+                let _ = process.kill();
+                let _ = process.wait();
+                let _ = std::fs::remove_file(&temporary_path);
+                return Err("FFmpeg packaging timed out after 120 seconds".to_string());
+            }
+            Ok(None) => std::thread::sleep(std::time::Duration::from_millis(100)),
+            Err(error) => {
+                let _ = process.kill();
+                let _ = process.wait();
+                let _ = std::fs::remove_file(&temporary_path);
+                return Err(format!(
+                    "Failed while waiting for FFmpeg packaging: {}",
+                    error
+                ));
+            }
+        }
+    }
+
+    std::fs::rename(&temporary_path, &output_path)
+        .map_err(|error| format!("Failed to finalize packaged recording: {}", error))?;
+    info!(
+        "✅ Packaged screen and audio recordings into {}",
+        output_path.display()
+    );
+    Ok(Some(output_path))
 }
 
 // ============================================================================
@@ -1009,6 +1127,7 @@ pub async fn stop_recording<R: Runtime>(
     );
 
     // Perform final cleanup with the manager if available
+    let mut combined_file: Option<String> = None;
     let (meeting_folder, meeting_name) = if let Some(mut manager) = manager_for_cleanup {
         info!("🧹 Performing final cleanup and saving recording data");
 
@@ -1035,6 +1154,24 @@ pub async fn stop_recording<R: Runtime>(
             Err(_) => {
                 warn!("⏱️ File I/O timeout (5 minutes) reached during save, continuing shutdown");
                 // Don't fail shutdown - transcripts are already preserved
+            }
+        }
+
+        if let Some(folder) = meeting_folder.as_ref() {
+            match package_screen_recording(folder.clone()).await {
+                Ok(Some(path)) => {
+                    manager.set_combined_file(Some("meeting.mp4".to_string()));
+                    combined_file = Some(path.to_string_lossy().to_string());
+                    let _ = app.emit(
+                        "recording-packaged",
+                        serde_json::json!({ "path": path.to_string_lossy() }),
+                    );
+                }
+                Ok(None) => {}
+                Err(error) => {
+                    warn!("Optional screen recording packaging failed: {}", error);
+                    let _ = app.emit("recording-package-error", error);
+                }
             }
         }
 
@@ -1079,7 +1216,8 @@ pub async fn stop_recording<R: Runtime>(
         serde_json::json!({
             "message": "Recording stopped - frontend will save after all transcripts received",
             "folder_path": folder_path_str,
-            "meeting_name": meeting_name_str
+            "meeting_name": meeting_name_str,
+            "combined_file": combined_file
         }),
     )
     .map_err(|e| e.to_string())?;

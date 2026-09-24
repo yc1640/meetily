@@ -37,6 +37,8 @@ pub struct MeetingMetadata {
     pub audio_file: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub screen_file: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub combined_file: Option<String>,
     pub transcript_file: String,
     pub sample_rate: u32,
     pub status: String,  // "recording", "completed", "error"
@@ -259,6 +261,7 @@ impl RecordingSaver {
             },
             audio_file: if create_checkpoints { "audio.mp4".to_string() } else { "".to_string() },
             screen_file: None,
+            combined_file: None,
             transcript_file: "transcripts.json".to_string(),
             sample_rate: 48000,
             status: "recording".to_string(),
@@ -294,6 +297,20 @@ impl RecordingSaver {
                 let metadata_clone = metadata.clone();
                 if let Err(e) = self.write_metadata(folder, &metadata_clone) {
                     warn!("Failed to update metadata with screen recording: {}", e);
+                }
+            }
+        }
+    }
+
+    /// Store the optional muxed screen/audio recording in meeting metadata.
+    pub fn set_combined_file(&mut self, file_name: Option<String>) {
+        if let Some(ref mut metadata) = self.metadata {
+            metadata.combined_file = file_name;
+
+            if let Some(folder) = &self.meeting_folder {
+                let metadata_clone = metadata.clone();
+                if let Err(e) = self.write_metadata(folder, &metadata_clone) {
+                    warn!("Failed to update metadata with combined recording: {}", e);
                 }
             }
         }
@@ -451,6 +468,7 @@ impl RecordingSaver {
             }
 
             info!("✅ Metadata updated with duration: {:?}s", metadata.duration_seconds);
+            self.metadata = Some(metadata);
         }
 
         // Emit save event with audio and transcript paths
